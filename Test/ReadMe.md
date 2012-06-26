@@ -1,1 +1,0 @@
-wcat is used to run these tests using the settings.ubr and the client.ubr files.
