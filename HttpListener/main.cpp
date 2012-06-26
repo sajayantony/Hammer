@@ -3,7 +3,7 @@
 
 #include "stdafx.h"
 #include "HttpListener.h"
-#pragma comment(lib, "httpapi.lib")
+//#pragma comment(lib, "httpapi.lib")
 
 
 //

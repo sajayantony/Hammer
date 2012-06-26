@@ -153,6 +153,14 @@ CreateHttpListener(
 		return result;
 	}
 
+	if(SetFileCompletionNotificationModes(_listener->hRequestQueue, 
+		FILE_SKIP_COMPLETION_PORT_ON_SUCCESS) == FALSE)
+	{
+		result = GetLastError();
+		TRACE_ERROR(result);
+		return result;
+	}
+
 	HttpListenerInitializeThreadPool();
 	_listener->pthreadPoolIO =  CreateThreadpoolIo(
 												_listener->hRequestQueue, 
@@ -250,7 +258,7 @@ void CALLBACK HttpListenerDemuxer
 {
 	PHTTP_LISTENER_OVERLAPPED pListenerRequest = (PHTTP_LISTENER_OVERLAPPED)lpOverlapped;
 
-	if(pListenerRequest->operationState = HTTP_LISTENER_STATE_REQUEST)
+	if(pListenerRequest->operationState == HTTP_LISTENER_STATE_REQUEST)
 	{
 		DEBUG_ASSERT(pListenerRequest->pRequest != NULL)
 		if(pListenerRequest && pListenerRequest->Pointer)
@@ -260,7 +268,7 @@ void CALLBACK HttpListenerDemuxer
 			pListenerRequest->completionRoutine(pListenerRequest);
 		}
 	}
-	else if(pListenerRequest->operationState = HTTP_LISTENER_STATE_RESPONSE)
+	else if(pListenerRequest->operationState == HTTP_LISTENER_STATE_RESPONSE)
 	{
 		// TODO Handle response completion and unify
 		pListenerRequest->completionRoutine(pListenerRequest);
@@ -353,7 +361,7 @@ EnqueueReceive
 	}
 	else if(result == NO_ERROR)
 	{		
-		// Synchronous completion		
+		// Synchronous completion	
 		QueueUserWorkItem(HttpListenerQueuedRequestCompletion,pListenerRequest, NULL);
 	}
 	else
@@ -451,11 +459,10 @@ SendHttpResponse(
     // Since we are sending all the entity body in one call, we don't have 
     // to specify the Content-Length.
     //
-
-	PHTTP_LISTENER_OVERLAPPED pResponse = new HTTP_LISTENER_OVERLAPPED;
-	ZeroMemory(pResponse, sizeof(HTTP_LISTENER_OVERLAPPED));
-	pResponse->completionRoutine = HttpResponseIocompletion;
-	pResponse->operationState = HTTP_LISTENER_STATE_RESPONSE;
+	PHTTP_LISTENER_OVERLAPPED pResponseOverlapped = new HTTP_LISTENER_OVERLAPPED;
+	ZeroMemory(pResponseOverlapped, sizeof(HTTP_LISTENER_OVERLAPPED));
+	pResponseOverlapped->completionRoutine = HttpResponseIocompletion;
+	pResponseOverlapped->operationState = HTTP_LISTENER_STATE_RESPONSE;
 
 	// Enqueue async IO Request.
 	StartThreadpoolIo(listener->pthreadPoolIO);
@@ -464,11 +471,11 @@ SendHttpResponse(
                     pRequest->RequestId,		// Request ID
                     0,							// Flags
                     &response,					// HTTP response
-                    NULL,						// pReserved1
+                    NULL,						// cache policy
                     NULL,						// bytes sent   (OPTIONAL)
                     NULL,						// pReserved2   (must be NULL)
                     0,							// Reserved3    (must be 0)
-                    pResponse,					// LPOVERLAPPED (OPTIONAL)
+                    pResponseOverlapped,		// LPOVERLAPPED (OPTIONAL)
                     NULL						// pReserved4   (must be NULL)
                     );
 
@@ -482,7 +489,7 @@ SendHttpResponse(
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion		
-		QueueUserWorkItem(HttpListenerQueuedRequestCompletion,pResponse, NULL);
+		QueueUserWorkItem(HttpListenerQueuedRequestCompletion,pResponseOverlapped, NULL);
 	}
 	else
 	{	

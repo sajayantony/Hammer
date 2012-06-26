@@ -43,15 +43,15 @@ typedef struct _HttpListener
 typedef struct _HttpListenerOverlapped: public OVERLAPPED
 {
 	HttpIoCompletionRoutine completionRoutine;
-	PHTTP_LISTENER listener;	
-		
+	DWORD			   operationState;
+	PHTTP_LISTENER listener;			
 	PHTTP_REQUEST	   pRequest;    
     HTTP_REQUEST_ID    requestId;
     DWORD              bytesRead;    
-	ULONG			   errorCode;
-    ULONG              requestSize;
-	ULONG			   isCompleted;
-	ULONG			   operationState;
+	DWORD			   errorCode;
+    DWORD              requestSize;
+	DWORD			   isCompleted;
+	
 	DWORD			   responseErrorCode;				
 } HTTP_LISTENER_OVERLAPPED;
 
