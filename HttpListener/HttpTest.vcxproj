@@ -193,7 +193,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <None Include="ReadMe.txt" />
-    <None Include="settings.ubr" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="HttpListener.h" />
