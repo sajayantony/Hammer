@@ -1,5 +1,4 @@
 #include "stdafx.h"
-#include <http.h>
 
 typedef struct _HttpListenerOverlapped HTTP_LISTENER_OVERLAPPED;
 typedef struct _HttpListenerOverlapped* PHTTP_LISTENER_OVERLAPPED;
@@ -11,6 +10,25 @@ typedef void (*HttpIoCompletionRoutine)(PHTTP_LISTENER_OVERLAPPED);
 typedef DWORD (*HttpListenerOnRequest)(PHTTP_LISTENER, PHTTP_REQUEST);
 
 #define HTTP_LISTENER_MAX_PENDING_RECEIVES 10
+
+#define INITIALIZE_HTTP_RESPONSE( resp, status, reason )                    \
+    do                                                                      \
+    {                                                                       \
+        RtlZeroMemory( (resp), sizeof(*(resp)) );                           \
+        (resp)->StatusCode = (status);                                      \
+        (resp)->pReason = (reason);                                         \
+        (resp)->ReasonLength = (USHORT) strlen(reason);                     \
+    } while (FALSE)
+
+
+#define ADD_KNOWN_HEADER(Response, HeaderId, RawValue)                      \
+    do                                                                      \
+    {                                                                       \
+        (Response).Headers.KnownHeaders[(HeaderId)].pRawValue = (RawValue); \
+        (Response).Headers.KnownHeaders[(HeaderId)].RawValueLength =        \
+            (USHORT) strlen(RawValue);                                      \
+    } while(FALSE)
+
 
 enum HTTP_LISTENER_STATE
 {		
@@ -77,5 +95,6 @@ SendHttpResponse(
     IN PHTTP_REQUEST  pRequest,
     IN USHORT         StatusCode,
     IN PSTR           pReason,
-    IN PSTR           pEntity
+    IN PSTR           pEntity, 
+	IN PSTR			  pContentLength
 );

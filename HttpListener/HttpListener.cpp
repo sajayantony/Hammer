@@ -12,23 +12,8 @@
 #define DEBUG_ASSERT(expression) if(!(expression)) DebugBreak();
 #define TRACE_ERROR(NtErrorStatus) DisplayWin32Error((NtErrorStatus))
 
-#define INITIALIZE_HTTP_RESPONSE( resp, status, reason )                    \
-    do                                                                      \
-    {                                                                       \
-        RtlZeroMemory( (resp), sizeof(*(resp)) );                           \
-        (resp)->StatusCode = (status);                                      \
-        (resp)->pReason = (reason);                                         \
-        (resp)->ReasonLength = (USHORT) strlen(reason);                     \
-    } while (FALSE)
 
-
-#define ADD_KNOWN_HEADER(Response, HeaderId, RawValue)                      \
-    do                                                                      \
-    {                                                                       \
-        (Response).Headers.KnownHeaders[(HeaderId)].pRawValue = (RawValue); \
-        (Response).Headers.KnownHeaders[(HeaderId)].RawValueLength =        \
-            (USHORT) strlen(RawValue);                                      \
-    } while(FALSE)
+#define SKIP_IOCP_SYNC_COMPLETION
 
 //
 // Prototypes 
@@ -102,6 +87,21 @@ HRESULT HttpListenerCleanupThreadPool()
 	DestroyThreadpoolEnvironment(&gThreadPoolEnvironment);
 	return GetLastError();
 }
+
+
+PHTTP_LISTENER_OVERLAPPED GetOverlapped()
+{
+	PHTTP_LISTENER_OVERLAPPED  overlapped = new HTTP_LISTENER_OVERLAPPED;	
+	ZeroMemory(overlapped, sizeof(HTTP_LISTENER_OVERLAPPED));
+	return overlapped;
+}
+
+
+void ReturnOverlapped(PHTTP_LISTENER_OVERLAPPED overlapped)
+{
+	delete overlapped;
+}
+
 
 DWORD
 CreateHttpListener(
@@ -316,8 +316,7 @@ EnqueueReceive
 	ULONG requestSize = 0;	
 
 	// Create the listener overlapped.
-	PHTTP_LISTENER_OVERLAPPED pListenerRequest = new HTTP_LISTENER_OVERLAPPED;	
-	RtlZeroMemory(pListenerRequest, sizeof(HTTP_LISTENER_OVERLAPPED));
+	PHTTP_LISTENER_OVERLAPPED pListenerRequest = GetOverlapped();
 	
     // Allocate a 2K buffer. this if required.    
     requestSize = sizeof(HTTP_REQUEST) + 2048;	
@@ -404,8 +403,8 @@ HttpRequestIocompletion
 								pRequest, 
 								200,
 								"OK",
-								"ECHO"
-								);
+								"ECHO",
+								"4");
 				if(dwResult != NO_ERROR)
 				{
 					TRACE_ERROR(dwResult);
@@ -424,7 +423,8 @@ SendHttpResponse(
     IN PHTTP_REQUEST  pRequest,
     IN USHORT         StatusCode,
     IN PSTR           pReason,
-    IN PSTR           pEntityString
+    IN PSTR           pEntityString,
+	IN PSTR			  pContentLength
     )
 {
     HTTP_RESPONSE   response;
@@ -435,26 +435,26 @@ SendHttpResponse(
     //
     // Initialize the HTTP response structure.
     //
-    INITIALIZE_HTTP_RESPONSE(&response, StatusCode, pReason);
+	ZeroMemory( (&response), sizeof(response));
+    response.StatusCode = (StatusCode);     
+	response.pReason = (pReason);        
+    response.ReasonLength = (USHORT) strlen(pReason);  
 
     //
     // Add a known header.
     //
-    ADD_KNOWN_HEADER(response, HttpHeaderContentType, "text/html");
-   
-    if(pEntityString)
-    {
-        // 
-        // Add an entity chunk
-        //
-        dataChunk.DataChunkType           = HttpDataChunkFromMemory;
-        dataChunk.FromMemory.pBuffer      = pEntityString;
-        dataChunk.FromMemory.BufferLength = (ULONG) strlen(pEntityString);
+    //ADD_KNOWN_HEADER(response, HttpHeaderContentType, "text/html");
+	response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = "text/html"; 
+	response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = strlen("text/html");
 
-        response.EntityChunkCount         = 1;
-        response.pEntityChunks            = &dataChunk;
-    }
+	DEBUG_ASSERT(pEntityString);
 
+	dataChunk.DataChunkType           = HttpDataChunkFromMemory;
+    dataChunk.FromMemory.pBuffer      = pEntityString;
+    dataChunk.FromMemory.BufferLength = (ULONG) strlen(pEntityString);
+    response.EntityChunkCount         = 1;
+    response.pEntityChunks            = &dataChunk;		
+		   
     // 
     // Since we are sending all the entity body in one call, we don't have 
     // to specify the Content-Length.

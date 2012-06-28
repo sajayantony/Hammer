@@ -12,8 +12,25 @@
 
 
 DWORD HandleRequest(PHTTP_LISTENER, PHTTP_REQUEST);
-
 void DisplayWin32Error(DWORD NTStatusMessage);
+
+// 
+// Test data 
+// 
+void gen_random(char *s, const int len) {
+    static const char alphanum[] =
+        "0123456789"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz";
+
+    for (int i = 0; i < len; ++i) {
+        s[i] = alphanum[rand() % (sizeof(alphanum) - 1)];
+    }
+
+    s[len] = 0;
+}
+
+char* global_responseBuffer;
 
 int _tmain(int argc, _TCHAR* argv[])
 {
@@ -24,6 +41,11 @@ int _tmain(int argc, _TCHAR* argv[])
         return -1;
     }
 
+	// Create the response data
+	const int messageSize = 500;
+	global_responseBuffer = new char[messageSize +1];
+	gen_random(global_responseBuffer, messageSize);
+	
 	PHTTP_LISTENER listener;
 	DWORD result = CreateHttpListener(&listener);
 	if(result != NO_ERROR)
@@ -46,7 +68,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		wprintf(L"Listener Started ...\n\t");
 
 		while(true)
-		{
+		{			
 			result = wscanf(L"%1s", input, 1);
 			if(strcmp(input, "q") == 0 )
 			{
@@ -84,46 +106,19 @@ void DisplayWin32Error(DWORD NTStatusMessage)
    FreeLibrary(Hand);
 }
 
-
-
-// 
-// Test data 
-// 
-void gen_random(char *s, const int len) {
-    static const char alphanum[] =
-        "0123456789"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz";
-
-    for (int i = 0; i < len; ++i) {
-        s[i] = alphanum[rand() % (sizeof(alphanum) - 1)];
-    }
-
-    s[len] = 0;
-}
-
-char* global_responseBuffer;
-
 DWORD 
 HandleRequest(
 	PHTTP_LISTENER pListener,
 	PHTTP_REQUEST pRequest
 )
-{
-	const int messageSize = 500;
-	if(global_responseBuffer == NULL)
-	{
-		global_responseBuffer = new char[messageSize +1];
-		gen_random(global_responseBuffer, messageSize);
-	}
-
-	//We only handle get for now...
+{   
 	DWORD result = SendHttpResponse(
 							pListener,
 							pRequest, 
 							200,
 							"OK",
-							global_responseBuffer
+							global_responseBuffer,
+							"500"
 							);
 
 	if(result != NO_ERROR)
