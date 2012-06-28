@@ -13,7 +13,13 @@
 
     class HttpServer : IServer
     {
-        int maxPendingGetContexts = 10;
+
+        // EndGetContext is not the end of the native operation, its the end of the managed one.  
+        // When the native operation completes it signals HttpListener, which did postprocessing 
+        // and then invoked your callback. 10 threads may not be enough due to the postprocessing lag her 
+        // and hence we use a processor multiplier. 
+        int maxPendingGetContexts = 10 * Environment.ProcessorCount;
+
         string prefix;
         BufferPool bufferPool;
         byte[] responseData;
@@ -22,16 +28,19 @@
         AsyncCallback onGetContext;
         AsyncCallback onReceiveComplete, onWriteComplete;
         WaitCallback onGetContextlater;
-        bool readBody;
+        readonly bool readBody;
+        readonly bool sendResponseOnClose;
 
         public HttpServer(int maxPendingContexts,
                             string serverUri, 
                             bool readBody,
-                            bool enqueueOnReceive)
+                            bool enqueueOnReceive, 
+                            bool sendResponseOnClose)
         {
             this.readBody = readBody;
             this.maxPendingGetContexts = maxPendingContexts;
             this.enqueueOnReceive = enqueueOnReceive;
+            this.sendResponseOnClose = sendResponseOnClose;
             this.prefix = serverUri;
             this.bufferPool = new BufferPool(1 * 1024);
             //this.responseData = System.Text.UTF8Encoding.UTF8.GetBytes("<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><EchoResponse xmlns=\"http://tempuri.org/\"><EchoResult>Echo : A</EchoResult></EchoResponse></s:Body></s:Envelope>");
@@ -116,10 +125,16 @@
             context.Response.StatusCode = (int)HttpStatusCode.OK;
             context.Response.ContentType = "text/html";
             context.Response.ContentLength64 = responseData.Length;
-            
-            //new WriteAsyncResult(context, responseData, null, null);
-            // We write the content in one shot. 
-            context.Response.Close(responseData, false);
+
+            if (this.sendResponseOnClose)
+            {
+                // We write the content in one shot. 
+                context.Response.Close(responseData, false);
+            }
+            else
+            {
+                new WriteAsyncResult(context, responseData, null, null);
+            }
         }
 
         void OnReceiveComplete(IAsyncResult result)
@@ -138,7 +153,6 @@
         {
             WriteAsyncResult.End(result);
         }
-
 
         AuthenticationSchemes SelectAuthenticationScheme(HttpListenerRequest request)
         {
@@ -171,7 +185,6 @@
         {
             return true;
         }
-
 
         class ReceiveAsyncResult : AsyncResult
         {
@@ -277,10 +290,7 @@
                 AsyncResult.End<WriteAsyncResult>(result);
             }
         }
-
     }
-
-
 
     class HttpPerformanceTestCase
     {
@@ -319,7 +329,8 @@
             HttpServer server = new HttpServer(10,                  // maxPendingContext
                                             "http://+:80/Server/",  // url 
                                             false,                  // readBody 
-                                            true                    // enqueueOnReceive
+                                            true,                   // enqueueOnReceive
+                                            true                    // sendresponseOnClose
                                             );
             server.StartListening();
         }
