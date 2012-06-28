@@ -50,7 +50,7 @@
             this.listener = new HttpListener();
             //this.listener.AuthenticationSchemes =  AuthenticationSchemes.Anonymous;
             //this.listener.UnsafeConnectionNtlmAuthentication = false;
-            this.listener.AuthenticationSchemeSelectorDelegate = new AuthenticationSchemeSelector(SelectAuthenticationScheme);
+            //this.listener.AuthenticationSchemeSelectorDelegate = new AuthenticationSchemeSelector(SelectAuthenticationScheme);
             this.listener.Prefixes.Add(this.prefix);
             this.listener.Start();
             Console.WriteLine("Server listening on --> " + this.prefix);
@@ -93,12 +93,12 @@
         void OnGetContextCore(IAsyncResult result)
         {
 
-            HttpListenerContext context = this.listener.EndGetContext(result);
-
             if (this.enqueueOnReceive)
             {
                 this.Enqueue();
             }
+
+            HttpListenerContext context = this.listener.EndGetContext(result);
 
             if (this.readBody)
             {
@@ -111,12 +111,15 @@
 
         }
 
-
         private void SendReply(HttpListenerContext context)
         {
             context.Response.StatusCode = (int)HttpStatusCode.OK;
-            context.Response.ContentType = "text/html";            
-            new WriteAsyncResult(context, responseData, null, null);
+            context.Response.ContentType = "text/html";
+            context.Response.ContentLength64 = responseData.Length;
+            
+            //new WriteAsyncResult(context, responseData, null, null);
+            // We write the content in one shot. 
+            context.Response.Close(responseData, false);
         }
 
         void OnReceiveComplete(IAsyncResult result)
@@ -130,7 +133,6 @@
             }
             SendReply(context);
         }
-
 
         void OnWriteComplete(IAsyncResult result)
         {
@@ -223,7 +225,6 @@
                 ReceiveAsyncResult thisPtr = AsyncResult.End<ReceiveAsyncResult>(result);
                 return thisPtr.context;
             }
-
         }
 
         class WriteAsyncResult : AsyncResult
@@ -286,9 +287,9 @@
 
         public int pendingContexts = 10;
 
-        public int minIOThreads = -1;
+        public int minIOThreads = 100;
 
-        public int minWorkerThreads = -1;
+        public int minWorkerThreads = 100;
 
         const string addressFormatString = "http://{0}:80/Server/";
 
@@ -298,16 +299,15 @@
 
         public HttpPerformanceTestCase()
         {
-
             //Don't throttle connections.
-            ServicePointManager.DefaultConnectionLimit = 1000;
+            ServicePointManager.DefaultConnectionLimit = 10000;
 
             if (this.minWorkerThreads > 0 || this.minIOThreads > 0)
             {
                 int workerThread, ioThread;
                 ThreadPool.GetMinThreads(out workerThread, out ioThread);
-                minWorkerThreads = minWorkerThreads < 0 ? workerThread : minWorkerThreads;
-                minIOThreads = (minIOThreads < 0) ? ioThread : minIOThreads;
+                this.minWorkerThreads = Math.Max(workerThread,minWorkerThreads);
+                this.minIOThreads = Math.Max(ioThread, minIOThreads);
 
                 if (!ThreadPool.SetMinThreads(minWorkerThreads, minIOThreads))
                 {
@@ -316,14 +316,13 @@
                 Console.WriteLine("Theadpool settings: MinWorkerThreads={0}, MinIOThreads={1}.", this.minWorkerThreads, this.minIOThreads);
             }
 
-            HttpServer server = new HttpServer(10, 
-                                            "http://+:80/Server/", 
-                                            false, 
-                                            true);
+            HttpServer server = new HttpServer(10,                  // maxPendingContext
+                                            "http://+:80/Server/",  // url 
+                                            false,                  // readBody 
+                                            true                    // enqueueOnReceive
+                                            );
             server.StartListening();
         }
-
-
 
         static void Main(string[] args)
         {
