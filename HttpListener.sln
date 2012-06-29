@@ -7,8 +7,17 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HttpListener", "HttpListene
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{B9CF3585-7165-45F9-B2C8-AC9ADE4C7551}"
 	ProjectSection(SolutionItems) = preProject
-		Test\client.ubr = Test\client.ubr
 		ReadMe.md = ReadMe.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "NodeListener", "NodeListener", "{D64A91D0-E959-4D94-AD4C-C9E2B51E3C56}"
+	ProjectSection(SolutionItems) = preProject
+		NodeListener\server.js = NodeListener\server.js
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Test", "Test", "{AB289A66-FD86-40F9-9745-21B0282F2055}"
+	ProjectSection(SolutionItems) = preProject
+		Test\client.ubr = Test\client.ubr
 		Test\settings.ubr = Test\settings.ubr
 	EndProjectSection
 EndProject
@@ -81,5 +90,9 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D64A91D0-E959-4D94-AD4C-C9E2B51E3C56} = {B9CF3585-7165-45F9-B2C8-AC9ADE4C7551}
+		{AB289A66-FD86-40F9-9745-21B0282F2055} = {B9CF3585-7165-45F9-B2C8-AC9ADE4C7551}
 	EndGlobalSection
 EndGlobal

@@ -4,15 +4,9 @@
 //
 
 #pragma once
-
 #include "targetver.h"
-
-
 #include <tchar.h>
+#include <stdio.h>
 #include <http.h>
-#include <ntstatus.h>
 
 void DisplayWin32Error(DWORD errorCode);
-
-
-// TODO: reference additional headers your program requires here

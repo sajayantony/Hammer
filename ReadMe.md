@@ -14,12 +14,15 @@ wcat is used to run these tests using the settings.ubr and the client.ubr files.
 
 - Start the Controller
 ```
-start wcctl.exe -t client.ubr -f settings.ubr -s %COMPUTERNAME% -v 2 -c 20 -o output.xml -x 
+start wcctl.exe -t client.ubr -f settings.ubr -s %COMPUTERNAME% -v 20 -c 5 -o output.xml -x 
 ```
 
 - Start Clients 
+
+Run this on each client machine 
+
 ```
-for /l %%i in (1,1,20) do start wcclient.exe %COMPUTERNAME%
+for /l %%i in (1,1,5) do start wcclient.exe <controllerName>
 ```
 
 

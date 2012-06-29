@@ -3,17 +3,8 @@
 
 #include "stdafx.h"
 #include "HttpListener.h"
-//#pragma comment(lib, "httpapi.lib")
-
-
-//
-// Prototypes.
-//
-
 
 DWORD HandleRequest(PHTTP_LISTENER, PHTTP_REQUEST);
-void DisplayWin32Error(DWORD NTStatusMessage);
-
 // 
 // Test data 
 // 
@@ -31,55 +22,6 @@ void gen_random(char *s, const int len) {
 }
 
 char* global_responseBuffer;
-
-int _tmain(int argc, _TCHAR* argv[])
-{
-	char input[200];
-    if (argc < 2)
-    {
-        wprintf(L"%ws: <Url1> [Url2] ... \n", argv[0]);
-        return -1;
-    }
-
-	// Create the response data
-	const int messageSize = 500;
-	global_responseBuffer = new char[messageSize +1];
-	gen_random(global_responseBuffer, messageSize);
-	
-	PHTTP_LISTENER listener;
-	DWORD result = CreateHttpListener(&listener);
-	if(result != NO_ERROR)
-	{
-		DisplayWin32Error(result);
-		return result;	
-	}
-
-	// Setup the callback to handle the request.
-	listener->OnRequestCompletionRoutine = HandleRequest;
-
-	result = StartHttpListener(listener, argc, argv);
-	if(result != NO_ERROR)
-	{
-		DisplayWin32Error(result);
-		return result;	
-	}
-	else
-	{
-		wprintf(L"Listener Started ...\n\t");
-
-		while(true)
-		{			
-			result = wscanf(L"%1s", input, 1);
-			if(strcmp(input, "q") == 0 )
-			{
-				DisposeHttpListener(listener);
-				result = 0;
-				break;
-			}
-		}
-	}
-    return result;
-}
 
 
 void DisplayWin32Error(DWORD NTStatusMessage)
@@ -128,3 +70,43 @@ HandleRequest(
 
 	return result;
 }
+
+int _tmain(int argc, _TCHAR* argv[])
+{	
+    if (argc < 2)
+    {
+        wprintf(L"%ws: <Url1> [Url2] ... \n", argv[0]);
+        return -1;
+    }
+
+	// Create the response data
+	const int messageSize = 500;
+	global_responseBuffer = new char[messageSize +1];
+	gen_random(global_responseBuffer, messageSize);
+	
+	PHTTP_LISTENER listener;
+	DWORD result = CreateHttpListener(&listener);
+	if(result != NO_ERROR)
+	{
+		DisplayWin32Error(result);
+		return result;	
+	}
+
+	// Setup the callback to handle the request.
+	listener->OnRequestReceiveHandler = HandleRequest;
+
+	result = StartHttpListener(listener, argc, argv);
+	if(result != NO_ERROR)
+	{
+		DisplayWin32Error(result);
+		return result;	
+	}
+	else
+	{
+		printf("Listener Started ...\n");
+		printf("Press any key to TERMINATE...\n");
+		_gettch();
+	}
+    return result;
+}
+

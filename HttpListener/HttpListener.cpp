@@ -2,18 +2,39 @@
 #include "HttpListener.h"
 #include <http.h>
 
+#define MAX_IO_CONTEXT_PROCESSOR_CACHE 256
 
-//#define ALLOC_MEM(cb) HeapAlloc(GetProcessHeap(), 0, (cb))
-//#define FREE_MEM(ptr) HeapFree(GetProcessHeap(), 0, (ptr))
-
-#define ALLOC_MEM(cb) malloc((cb))
-#define FREE_MEM(ptr) free((ptr))
+#define ALLOC_MEM(x) HeapAlloc(GetProcessHeap(), 0, (x))  
+#define FREE_MEM(x) HeapFree(GetProcessHeap(), 0, (x)) 
 
 #define DEBUG_ASSERT(expression) if(!(expression)) DebugBreak();
-#define TRACE_ERROR(NtErrorStatus) DisplayWin32Error((NtErrorStatus))
+#define __TRACE_ERROR(NtErrorStatus) DisplayWin32Error((NtErrorStatus))
+#define LOG_ERROR(formatStringMessage,errorCode) wprintf((formatStringMessage),(errorCode)); __TRACE_ERROR(errorCode);
 
+typedef struct DECLSPEC_CACHEALIGN _LOOKASIDE
+{
+	SLIST_HEADER Header;
+	LONGLONG Length;
+} LOOKASIDE, *PLOOKASIDE;
 
-#define SKIP_IOCP_SYNC_COMPLETION
+typedef struct _IO_CONTEXT: public OVERLAPPED
+{
+	SLIST_ENTRY LookAsideEntry;
+	HttpIoCompletionRoutine CompletionRoutine;
+	DWORD			   operationState;
+	PHTTP_LISTENER	   listener;				
+    HTTP_REQUEST_ID    requestId;
+    DWORD              NumberOfBytes;    
+	DWORD			   ErrorCode;
+    DWORD              requestSize;
+	DWORD			   IsCompleted;
+	union {  
+        HTTP_REQUEST Request;  
+        UCHAR RequestBuffer[REQUEST_BUFFER_SIZE];  
+    };  
+} HTTP_IO_CONTEXT;
+
+DECLSPEC_CACHEALIGN LOOKASIDE IoContextCacheList[MAX_IO_CONTEXT_PROCESSOR_CACHE];
 
 //
 // Prototypes 
@@ -26,90 +47,246 @@ HttpListenerDemuxer(
 	ULONG errorcode, 
 	ULONG_PTR NumberOfBytes, PTP_IO);
 
-void HttpRequestIocompletion(
-	PHTTP_LISTENER_OVERLAPPED
-);
-
-void
-HttpResponseIocompletion
-(
-	PHTTP_LISTENER_OVERLAPPED plistenerRequest
-);
 
 void 
 HttpListenerOnRequestDequeued(
 	PHTTP_LISTENER listener
 );
 
+
 void 
 HttpListenerOnRequestCompleted(
-	PHTTP_LISTENER_OVERLAPPED listener
+	PHTTP_IO_CONTEXT listener
 
 );
 
-DWORD
-EnsurePump(
-	PHTTP_LISTENER listener
-);
-
-
-DWORD
-EnqueueReceive(
-	PHTTP_LISTENER listener
-);
-
-
-//
-// GLOBAL variables;
-//
-TP_CALLBACK_ENVIRON gThreadPoolEnvironment;
-PTP_POOL global_pThreadPool;
-
-HRESULT HttpListenerInitializeThreadPool()
+HRESULT HttpListenerInitializeThreadPool(PHTTP_LISTENER listener)
 {	
-	memset( (void*) &( gThreadPoolEnvironment ), 0, sizeof( TP_CALLBACK_ENVIRON ) );  
-	InitializeThreadpoolEnvironment(&gThreadPoolEnvironment);
+	DWORD dwResult;
 
-	PTP_POOL pThreadPool = CreateThreadpool(NULL);	
-	global_pThreadPool = pThreadPool;
+	TP_CALLBACK_ENVIRON tpCalbackEnviron;
+	PTP_POOL pThreadPool;	
 
+	//I nitialize the threadPool environment
+	ZeroMemory(&( tpCalbackEnviron ), sizeof( TP_CALLBACK_ENVIRON ) );  
+	InitializeThreadpoolEnvironment(&tpCalbackEnviron);
+
+	// Create the threadpool
+	pThreadPool = CreateThreadpool(NULL);
 	if(pThreadPool == NULL)
 	{
 		return HRESULT_FROM_WIN32(GetLastError());
 	}
+	else
+	{
+		SetThreadpoolCallbackPool(&tpCalbackEnviron, pThreadPool );	
+		dwResult = HRESULT_FROM_WIN32(GetLastError());
+	}
 
-	SetThreadpoolCallbackPool(&gThreadPoolEnvironment, pThreadPool );	
-	
+	listener->global_pThreadPool = pThreadPool;
+	listener->errorCode = dwResult;
+	return dwResult;
 }
 
-HRESULT HttpListenerCleanupThreadPool()
+HRESULT HttpListenerCleanupThreadPool(PHTTP_LISTENER listener)
 {	
-	DestroyThreadpoolEnvironment(&gThreadPoolEnvironment);
+	DestroyThreadpoolEnvironment(&listener->tpEnvironment);
 	return GetLastError();
 }
 
-
-PHTTP_LISTENER_OVERLAPPED GetOverlapped()
+PHTTP_IO_CONTEXT GetOverlapped()
 {
-	PHTTP_LISTENER_OVERLAPPED  overlapped = new HTTP_LISTENER_OVERLAPPED;	
-	ZeroMemory(overlapped, sizeof(HTTP_LISTENER_OVERLAPPED));
-	return overlapped;
+	LOOKASIDE cacheEntry;
+	PSLIST_ENTRY pEntry;
+
+	cacheEntry = IoContextCacheList[GetCurrentProcessorNumber()% MAX_IO_CONTEXT_PROCESSOR_CACHE];
+	pEntry = InterlockedPopEntrySList(&cacheEntry.Header);
+	if(pEntry != NULL)
+	{
+		// Return address of the containing structure.
+		return CONTAINING_RECORD(pEntry, HTTP_IO_CONTEXT, LookAsideEntry);
+	}
+
+	PHTTP_IO_CONTEXT context = (PHTTP_IO_CONTEXT)ALLOC_MEM(sizeof(HTTP_IO_CONTEXT));		
+	return context;
 }
 
-
-void ReturnOverlapped(PHTTP_LISTENER_OVERLAPPED overlapped)
+void ReturnOverlapped(PHTTP_IO_CONTEXT overlapped)
 {
-	delete overlapped;
+	LOOKASIDE cacheEntry = IoContextCacheList[GetCurrentProcessorNumber()% MAX_IO_CONTEXT_PROCESSOR_CACHE];
+	InterlockedPushEntrySList(&cacheEntry.Header, &overlapped->LookAsideEntry);
 }
 
+void CALLBACK HttpListenerDemuxer
+(
+	PTP_CALLBACK_INSTANCE instance, 
+	PVOID context, 
+	PVOID lpOverlapped, 
+	ULONG errorcode, 
+	ULONG_PTR NumberOfBytes, 
+	PTP_IO Io
+)
+{
+	PHTTP_IO_CONTEXT pListenerRequest = (PHTTP_IO_CONTEXT)lpOverlapped;
+	pListenerRequest->NumberOfBytes = (DWORD)NumberOfBytes;
+	pListenerRequest->ErrorCode = errorcode;
+	pListenerRequest->CompletionRoutine(pListenerRequest);	
+	return;
+}
+
+DWORD WINAPI 
+HttpListenerQueuedRequestCompletion(
+	LPVOID lpThreadParameter
+)
+{
+	PHTTP_IO_CONTEXT request = (PHTTP_IO_CONTEXT)lpThreadParameter;
+	request ->CompletionRoutine(request);
+	return NO_ERROR;
+}
+
+void
+HttpRequestIocompletion
+(
+	PHTTP_IO_CONTEXT plistenerRequest
+)
+{
+	if(plistenerRequest && plistenerRequest->Pointer)
+	{		
+		DWORD dwResult = NO_ERROR;
+		PHTTP_LISTENER pListener = plistenerRequest->listener;		
+		PHTTP_REQUEST pRequest = &(plistenerRequest->Request);
+
+		DEBUG_ASSERT(pListener != NULL);
+		DEBUG_ASSERT(plistenerRequest->IsCompleted == 0);
+		HttpListenerOnRequestDequeued(pListener);
+				
+		if(plistenerRequest->ErrorCode == NO_ERROR)
+		{
+			PHTTP_LISTENER plistener = plistenerRequest->listener;
+			if(plistener->OnRequestReceiveHandler != NULL)
+			{
+				dwResult = plistener->OnRequestReceiveHandler(plistenerRequest->listener, 
+															  &plistenerRequest->Request);
+			}
+			else
+			{
+				dwResult = SendHttpResponse(
+								plistener,
+								pRequest, 
+								200,
+								"OK",
+								"ECHO",
+								"4");
+				if(dwResult != NO_ERROR)
+				{
+					LOG_ERROR(L"\nSendHttpResponse Error - %lu", dwResult);
+				}
+			}						
+		}
+		
+		if (dwResult == ERROR_IO_PENDING)
+		{
+			// Async completion on send not supported.
+			DEBUG_ASSERT(false);
+		}
+		else 
+		{
+			plistenerRequest->IsCompleted++;
+			plistenerRequest->ErrorCode = dwResult;
+			HttpListenerOnRequestCompleted(plistenerRequest);
+		}
+	}
+}
+
+DWORD
+EnqueueReceive
+(
+    IN PHTTP_LISTENER listener
+)
+{
+	DWORD result;		
+
+	// Create the listener overlapped.
+	PHTTP_IO_CONTEXT pListenerRequest = GetOverlapped();
+	ZeroMemory((void*)pListenerRequest, sizeof(HTTP_IO_CONTEXT));
+
+    // TODO fix allocation of the request buffer
+	pListenerRequest->requestSize = REQUEST_BUFFER_SIZE;
+
+    if (pListenerRequest == NULL)
+    {
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+
+	// Initalize the overlapped fields.
+	pListenerRequest->listener = listener;	
+	pListenerRequest->CompletionRoutine = HttpRequestIocompletion;    
+	pListenerRequest->Pointer = &pListenerRequest->Request;
+    pListenerRequest->requestSize  = REQUEST_BUFFER_SIZE;	
+	HTTP_SET_NULL_ID( &pListenerRequest->requestId);
+	pListenerRequest->operationState = HTTP_LISTENER_STATE_REQUEST;
+    
+	// Enqueue async IO Request.
+	StartThreadpoolIo(listener->pthreadPoolIO);
+
+    result = HttpReceiveHttpRequest(
+                listener->hRequestQueue,			// Req Queue
+                pListenerRequest->requestId,		// Req ID
+                0,									// Flags
+				&pListenerRequest->Request,			// HTTP request buffer
+                pListenerRequest->requestSize,		// req buffer length
+                NULL,								// bytes received
+                pListenerRequest					// LPOVERLAPPED
+                );
+	
+	if(result != NO_ERROR && result != ERROR_IO_PENDING)
+	{
+		// need to call this whenever an async I/O operation fails synchronously
+		CancelThreadpoolIo(listener->pthreadPoolIO); 
+		LOG_ERROR(L"\nSycnhronous request processing completion error - %lu", result);
+		return result;
+	}
+	else if(result == NO_ERROR)
+	{		
+		// Synchronous completion	
+		QueueUserWorkItem(HttpListenerQueuedRequestCompletion,pListenerRequest, NULL);
+	}
+	else
+	{	
+		DEBUG_ASSERT(result == ERROR_IO_PENDING)	
+	}
+
+    return NO_ERROR;
+}
+
+DWORD
+EnsurePump(
+	PHTTP_LISTENER listener
+)
+{
+	DWORD dwResult;
+	InterlockedIncrement(&listener->stats->ulPendingReceives);	
+	dwResult = EnqueueReceive(listener);
+	if(dwResult != NO_ERROR)
+	{
+		// The pump has failed.
+		LOG_ERROR(L"\nPump failed with error %lu", dwResult);		
+		DEBUG_ASSERT(false);		
+	}
+	
+	return dwResult;
+}
 
 DWORD
 CreateHttpListener(
 	OUT PHTTP_LISTENER* httpListener
 	)
 {
-	PHTTP_LISTENER _listener = (PHTTP_LISTENER)ALLOC_MEM(sizeof(HttpListener)); 
-	RtlZeroMemory(_listener, sizeof(HttpListener));
+
+	ULONG           result;
+
+	PHTTP_LISTENER _listener = (PHTTP_LISTENER)ALLOC_MEM(sizeof(HTTP_LISTENER)); 
+	ZeroMemory(_listener, sizeof(HTTP_LISTENER));
 	(*httpListener) = _listener;
 
 	_listener->hRequestQueue = NULL;
@@ -117,9 +294,8 @@ CreateHttpListener(
 	_listener->urls = NULL;
 	_listener->pthreadPoolIO = NULL;
 	_listener->state = HTTP_LISTENER_STATE_FAULTED;	
-
-	ULONG           result;        
-    HTTPAPI_VERSION HttpApiVersion = HTTPAPI_VERSION_2;
+	_listener->stats = (PLISTENER_STATS)_aligned_malloc(sizeof(LISTENER_STATS),MEMORY_ALLOCATION_ALIGNMENT);
+	HTTPAPI_VERSION HttpApiVersion = HTTPAPI_VERSION_2;	
 
 	 //
     // Initialize HTTP APIs.
@@ -132,42 +308,59 @@ CreateHttpListener(
 
     if (result != NO_ERROR)
     {
-        wprintf(L"HttpInitialize failed with %lu \n", result);
-		_listener->errorCode = result;
-        return result;
+		DEBUG_ASSERT(false);
+		LOG_ERROR(L"\nHttpInitialize failed with %lu", result);		
     }
-
-
 	
-	result = HttpCreateServerSession(HttpApiVersion,&_listener->sessionId, NULL); 
-	if(result)
+	if(result == NO_ERROR)
 	{
-		TRACE_ERROR(result);
-		return result;
+		result = HttpCreateServerSession(HttpApiVersion,
+										&_listener->sessionId, 
+										NULL); 
+		if(result)
+		{		
+			LOG_ERROR(L"\nHttpCreateServerSession failed with %lu", result);			
+		}
 	}
 
-	result = HttpCreateRequestQueue(HttpApiVersion, NULL, NULL, 0, &_listener->hRequestQueue);
-	if(result)
+	if(result == NO_ERROR)
 	{
-		TRACE_ERROR(result);
-		return result;
+		result = HttpCreateRequestQueue(HttpApiVersion, 
+										NULL, 
+										NULL, 
+										0,
+										&_listener->hRequestQueue);
+		if(result)
+		{
+			LOG_ERROR(L"\nHttpCreateRequestQueue failed with %lu", result);				
+		}
+	}
+	
+	if(result == NO_ERROR)
+	{
+		if(SetFileCompletionNotificationModes(_listener->hRequestQueue, 
+			FILE_SKIP_COMPLETION_PORT_ON_SUCCESS) == FALSE)
+		{
+			result = GetLastError();			
+		}
 	}
 
-	if(SetFileCompletionNotificationModes(_listener->hRequestQueue, 
-		FILE_SKIP_COMPLETION_PORT_ON_SUCCESS) == FALSE)
-	{
-		result = GetLastError();
-		TRACE_ERROR(result);
-		return result;
+	if(result == NO_ERROR)
+	{	
+		result = HttpListenerInitializeThreadPool(_listener);
 	}
 
-	HttpListenerInitializeThreadPool();
-	_listener->pthreadPoolIO =  CreateThreadpoolIo(
-												_listener->hRequestQueue, 
-												HttpListenerDemuxer, 
-												(void*)_listener, 
-												&gThreadPoolEnvironment);
-	return result;
+	if(result == NO_ERROR)
+	{
+		_listener->pthreadPoolIO =  CreateThreadpoolIo(_listener->hRequestQueue, 
+														HttpListenerDemuxer, 
+														(void*)_listener, 
+														&_listener->tpEnvironment);
+	}
+
+
+	_listener->errorCode = result;
+	return _listener->errorCode;
 }
 
 DWORD 
@@ -204,9 +397,7 @@ StartHttpListener(
 	// Add the urls to the UrlGroup
 	for (int i = 1; i < urlCount; i++)
     {
-        wprintf(
-          L"we are listening for requests on the following url: %s\n", 
-          urls[i]);
+        wprintf(L"we are listening for requests on the following url: %s\n", urls[i]);
 
         result = HttpAddUrlToUrlGroup(
 									_listener->urlGroupId,
@@ -246,175 +437,14 @@ StartHttpListener(
 	return result;
 }
 
-void CALLBACK HttpListenerDemuxer
-(
-	PTP_CALLBACK_INSTANCE instance, 
-	PVOID context, 
-	PVOID lpOverlapped, 
-	ULONG errorcode, 
-	ULONG_PTR NumberOfBytes, 
-	PTP_IO Io
-)
-{
-	PHTTP_LISTENER_OVERLAPPED pListenerRequest = (PHTTP_LISTENER_OVERLAPPED)lpOverlapped;
-
-	if(pListenerRequest->operationState == HTTP_LISTENER_STATE_REQUEST)
-	{
-		DEBUG_ASSERT(pListenerRequest->pRequest != NULL)
-		if(pListenerRequest && pListenerRequest->Pointer)
-		{		
-			pListenerRequest->bytesRead = (DWORD)NumberOfBytes;
-			pListenerRequest->errorCode = errorcode;
-			pListenerRequest->completionRoutine(pListenerRequest);
-		}
-	}
-	else if(pListenerRequest->operationState == HTTP_LISTENER_STATE_RESPONSE)
-	{
-		// TODO Handle response completion and unify
-		pListenerRequest->completionRoutine(pListenerRequest);
-	}
-	return;
-}
-
-DWORD
-EnsurePump(
-	PHTTP_LISTENER listener
-)
-{
-	DWORD dwResult;
-	InterlockedIncrement(&listener->ulPendingReceives);	
-	dwResult = EnqueueReceive(listener);
-	if(dwResult != NO_ERROR)
-	{
-		// The pump has failed.
-		wprintf(L"Pump failed -----> \t");
-		TRACE_ERROR(dwResult);
-		DEBUG_ASSERT(false);		
-	}
-	
-	return dwResult;
-}
-
-DWORD WINAPI 
-HttpListenerQueuedRequestCompletion(
-	LPVOID lpThreadParameter
-)
-{
-	PHTTP_LISTENER_OVERLAPPED request = (PHTTP_LISTENER_OVERLAPPED)lpThreadParameter;
-	request ->completionRoutine(request);
-	return NO_ERROR;
-}
-
-DWORD
-EnqueueReceive
-(
-    IN PHTTP_LISTENER listener
-)
-{
-	DWORD result;
-	VOID* pRequestBuffer = NULL;
-	ULONG requestSize = 0;	
-
-	// Create the listener overlapped.
-	PHTTP_LISTENER_OVERLAPPED pListenerRequest = GetOverlapped();
-	
-    // Allocate a 2K buffer. this if required.    
-    requestSize = sizeof(HTTP_REQUEST) + 2048;	
-    pRequestBuffer = ALLOC_MEM( requestSize  );
-	RtlZeroMemory(pRequestBuffer, requestSize );
-	pListenerRequest->requestSize = requestSize;
-
-    if (pRequestBuffer == NULL)
-    {
-        return ERROR_NOT_ENOUGH_MEMORY;
-    }
-
-	// Initalize the overlapped fields.
-	pListenerRequest->listener = listener;	
-	pListenerRequest->completionRoutine = HttpRequestIocompletion;
-    pListenerRequest->pRequest = (PHTTP_REQUEST)pRequestBuffer;
-	pListenerRequest->Pointer = pListenerRequest->pRequest;
-    pListenerRequest->requestSize  = requestSize;	
-	HTTP_SET_NULL_ID( &pListenerRequest->requestId);
-	pListenerRequest->operationState = HTTP_LISTENER_STATE_REQUEST;
-    
-	// Enqueue async IO Request.
-	StartThreadpoolIo(listener->pthreadPoolIO);
-
-    result = HttpReceiveHttpRequest(
-                listener->hRequestQueue,			// Req Queue
-                pListenerRequest->requestId,		// Req ID
-                0,									// Flags
-                pListenerRequest->pRequest,			// HTTP request buffer
-                pListenerRequest->requestSize,		// req buffer length
-                NULL,								// bytes received
-                pListenerRequest					// LPOVERLAPPED
-                );
-	
-	if(result != NO_ERROR && result != ERROR_IO_PENDING)
-	{
-		// need to call this whenever an async I/O operation fails synchronously
-		CancelThreadpoolIo(listener->pthreadPoolIO); 
-		wprintf(L"Error during request processing");
-		return result;
-	}
-	else if(result == NO_ERROR)
-	{		
-		// Synchronous completion	
-		QueueUserWorkItem(HttpListenerQueuedRequestCompletion,pListenerRequest, NULL);
-	}
-	else
-	{	
-		DEBUG_ASSERT(result == ERROR_IO_PENDING)	
-	}
-
-    return NO_ERROR;
-}
 
 void
-HttpRequestIocompletion
+HttpListenerResponseIocompletion
 (
-	PHTTP_LISTENER_OVERLAPPED plistenerRequest
+	PHTTP_IO_CONTEXT pListenerResponse
 )
-{
-	if(plistenerRequest && plistenerRequest->Pointer)
-	{
-		
-		DWORD dwResult = NO_ERROR;
-		PHTTP_LISTENER pListener = plistenerRequest->listener;		
-		PHTTP_REQUEST pRequest = plistenerRequest->pRequest;
-
-		DEBUG_ASSERT(pListener != NULL);
-		DEBUG_ASSERT(plistenerRequest->isCompleted == 0);
-		HttpListenerOnRequestDequeued(pListener);
-				
-		if(plistenerRequest->errorCode == NO_ERROR)
-		{
-			if(plistenerRequest->listener->OnRequestCompletionRoutine != NULL)
-			{
-				dwResult = plistenerRequest->listener->OnRequestCompletionRoutine(
-					plistenerRequest->listener, 
-					plistenerRequest->pRequest);
-			}
-			else
-			{
-				dwResult = SendHttpResponse(
-								plistenerRequest->listener,
-								pRequest, 
-								200,
-								"OK",
-								"ECHO",
-								"4");
-				if(dwResult != NO_ERROR)
-				{
-					TRACE_ERROR(dwResult);
-				}
-			}						
-		}
-		plistenerRequest->isCompleted++;
-		plistenerRequest->responseErrorCode = dwResult;
-		HttpListenerOnRequestCompleted(plistenerRequest);
-	}
+{	
+	ReturnOverlapped(pListenerResponse);
 }
 
 DWORD
@@ -430,7 +460,6 @@ SendHttpResponse(
     HTTP_RESPONSE   response;
     HTTP_DATA_CHUNK dataChunk;
     DWORD           result;
-    DWORD           bytesSent;
 
     //
     // Initialize the HTTP response structure.
@@ -443,9 +472,9 @@ SendHttpResponse(
     //
     // Add a known header.
     //
-    //ADD_KNOWN_HEADER(response, HttpHeaderContentType, "text/html");
+    //ADD_KNOWN_HEADER
 	response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = "text/html"; 
-	response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = strlen("text/html");
+	response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength = (USHORT)strlen("text/html");
 
 	DEBUG_ASSERT(pEntityString);
 
@@ -459,10 +488,11 @@ SendHttpResponse(
     // Since we are sending all the entity body in one call, we don't have 
     // to specify the Content-Length.
     //
-	PHTTP_LISTENER_OVERLAPPED pResponseOverlapped = new HTTP_LISTENER_OVERLAPPED;
-	ZeroMemory(pResponseOverlapped, sizeof(HTTP_LISTENER_OVERLAPPED));
-	pResponseOverlapped->completionRoutine = HttpResponseIocompletion;
+	PHTTP_IO_CONTEXT pResponseOverlapped = GetOverlapped();
+	ZeroMemory(pResponseOverlapped, sizeof(HTTP_IO_CONTEXT));
+
 	pResponseOverlapped->operationState = HTTP_LISTENER_STATE_RESPONSE;
+	pResponseOverlapped->CompletionRoutine = HttpListenerResponseIocompletion;
 
 	// Enqueue async IO Request.
 	StartThreadpoolIo(listener->pthreadPoolIO);
@@ -483,7 +513,7 @@ SendHttpResponse(
 	{
 		// need to call this whenever an async I/O operation fails synchronously
 		CancelThreadpoolIo(listener->pthreadPoolIO); 
-		wprintf(L"Error during request processing");
+		LOG_ERROR(L"\nSynchronous completion response processing error - %lu", result);
 		return result;
 	}
 	else if(result == NO_ERROR)
@@ -499,71 +529,52 @@ SendHttpResponse(
     return NO_ERROR;
 }
 
-void
-HttpResponseIocompletion
-(
-	PHTTP_LISTENER_OVERLAPPED pListenerResponse
-)
-{
-	// Clean up the allocated response overlapped
-	delete pListenerResponse;
-}
-
 void HttpListenerOnRequestDequeued(PHTTP_LISTENER listener)
 {	
-	ULONG pendingReceives = InterlockedDecrement(&listener->ulPendingReceives);
+	ULONG pendingReceives = InterlockedDecrement(&listener->stats->ulPendingReceives);
 	ULONG state;
 	// Check if the pump should shut down
 	if( (state = InterlockedCompareExchange(&listener->state, 
 								HTTP_LISTENER_STATE_STARTED, 
-								HTTP_LISTENER_STATE_STARTED)) == HTTP_LISTENER_STATE_DISPOSING 
-								&& pendingReceives == 0 ) // Last pending receive
+								HTTP_LISTENER_STATE_STARTED)) == HTTP_LISTENER_STATE_STARTED) // Last pending receive
 	{
-		// Check if the pump is shutting down
-		DisposeHttpListener(listener);
-		return;
-	}
-
-	if(state == HTTP_LISTENER_STATE_STARTED)
-	{
-		InterlockedIncrement(&listener->ulActiveRequests);	
+		InterlockedIncrement(&listener->stats->ulActiveRequests);	
 		DWORD result = EnsurePump(listener);
 		if(result != NO_ERROR)
 		{
-			DisposeHttpListener(listener);
+			LOG_ERROR(L"\nEnsure pump failed with error - %lu", result);
+			ExitProcess(result);
 		}
+	}
+	else if (state == HTTP_LISTENER_STATE_DISPOSING)
+	{
+		return;
+	}
+	else {
+		// We should never reach this
+		DEBUG_ASSERT(false);
 	}
 }
 
 
-void HttpListenerOnRequestCompleted(PHTTP_LISTENER_OVERLAPPED plistenerRequest)
+void HttpListenerOnRequestCompleted(PHTTP_IO_CONTEXT plistenerRequest)
 {
 	PHTTP_LISTENER listener = plistenerRequest->listener;
 	plistenerRequest->listener = NULL;
-	if(listener != NULL)
-	{		
-		InterlockedDecrement(&listener->ulActiveRequests);
-	}
+	ULONG activeRequest;
+	activeRequest = InterlockedDecrement(&listener->stats->ulActiveRequests);
 
-	//Clean up request
-	if(plistenerRequest->pRequest != NULL)
-	{
-		FREE_MEM(plistenerRequest->pRequest);
-	}
-
-	delete (plistenerRequest);
+	// TODO: Clean up request
+	ReturnOverlapped(plistenerRequest);
 }
 
 void DisposeHttpListener(PHTTP_LISTENER listener)
 {	
-	// TODO cleanup under a critical section
-	// and stop the pump.
-	wprintf(L"Dispose called...\n");
-	if(InterlockedCompareExchange(&listener->state, 
+	ULONG state;
+	if((state = InterlockedCompareExchange(&listener->state, 
 								HTTP_LISTENER_STATE_DISPOSING, 
-								HTTP_LISTENER_STATE_STARTED) == HTTP_LISTENER_STATE_STARTED)
-	{
-		wprintf(L"Http listener shutting down ...\n");
+								HTTP_LISTENER_STATE_STARTED) )== HTTP_LISTENER_STATE_STARTED)
+	{		
 		if(listener && listener->hRequestQueue)
 		{
 			for(int i=1; i<=listener->urlsCount; i++)
@@ -585,20 +596,24 @@ void DisposeHttpListener(PHTTP_LISTENER listener)
 		return;
 	}
 
-	//Only one thread can dispose the listener
-	// TODO: Handle pump faulting.
+
+	if(state = HTTP_LISTENER_STATE_STOPPED)
+	{
+		return;
+	}
+
+	// Only one thread can dispose the listener	
 	if(InterlockedCompareExchange(&listener->state, 
 								HTTP_LISTENER_STATE_STOPPED, 
 								HTTP_LISTENER_STATE_DISPOSING) == HTTP_LISTENER_STATE_DISPOSING)
-	{	
-
-		wprintf(L"Cleaningup Listener...\n");
-		FREE_MEM(listener);
-
+	{		
 		//
 		// Cleanup threadpool 
 		//
-		HttpListenerCleanupThreadPool();		
-		wprintf(L"Http listener terminated...\n");
+		HttpListenerCleanupThreadPool(listener);		
+		
+		// Free the listener
+		FREE_MEM(listener);
+		printf("Http listener terminated...\n");
 	}
 }
