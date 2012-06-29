@@ -18,7 +18,7 @@
         // When the native operation completes it signals HttpListener, which did postprocessing 
         // and then invoked your callback. 10 threads may not be enough due to the postprocessing lag her 
         // and hence we use a processor multiplier. 
-        int maxPendingGetContexts = 10 * Environment.ProcessorCount;
+        int maxPendingGetContexts = 20 * Environment.ProcessorCount;
 
         string prefix;
         BufferPool bufferPool;
@@ -306,12 +306,8 @@
         public string ServerUri { get { return String.Format(addressFormatString, Environment.MachineName); } }        
         #region Performance Harness
 
-
         public HttpPerformanceTestCase()
-        {
-            //Don't throttle connections.
-            ServicePointManager.DefaultConnectionLimit = 10000;
-
+        {            
             if (this.minWorkerThreads > 0 || this.minIOThreads > 0)
             {
                 int workerThread, ioThread;
@@ -323,6 +319,7 @@
                 {
                     throw new InvalidOperationException("Could not set minIOThreads.");
                 }
+
                 Console.WriteLine("Theadpool settings: MinWorkerThreads={0}, MinIOThreads={1}.", this.minWorkerThreads, this.minIOThreads);
             }
 
