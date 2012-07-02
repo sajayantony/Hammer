@@ -5,6 +5,7 @@
     using System.IO;
     using System.Net;
     using System.Threading;
+    using System.Diagnostics;
 
     interface IServer
     {
@@ -18,7 +19,7 @@
         // When the native operation completes it signals HttpListener, which did postprocessing 
         // and then invoked your callback. 10 threads may not be enough due to the postprocessing lag her 
         // and hence we use a processor multiplier. 
-        int maxPendingGetContexts = 20 * Environment.ProcessorCount;
+        internal readonly int maxPendingGetContexts = 10 * Environment.ProcessorCount;
 
         string prefix;
         BufferPool bufferPool;
@@ -42,7 +43,7 @@
             this.enqueueOnReceive = enqueueOnReceive;
             this.sendResponseOnClose = sendResponseOnClose;
             this.prefix = serverUri;
-            this.bufferPool = new BufferPool(1 * 1024);
+            this.bufferPool = new BufferPool(1 * 1024); // Initialize 4k bufferpools. 
             //this.responseData = System.Text.UTF8Encoding.UTF8.GetBytes("<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><EchoResponse xmlns=\"http://tempuri.org/\"><EchoResult>Echo : A</EchoResult></EchoResponse></s:Body></s:Envelope>");
             //this.responseData = System.Text.UTF8Encoding.UTF8.GetBytes("HELLO ASYNC");
             this.responseData = System.Text.ASCIIEncoding.ASCII.GetBytes(new String('a', 500));
@@ -330,6 +331,11 @@
                                             true                    // sendresponseOnClose
                                             );
             server.StartListening();
+
+            Console.WriteLine("MaxPendingGetContexts : {0}" ,server.maxPendingGetContexts);
+            
+            // Make sure we are running with SeverGC since without this the CPU cannot be saturated.
+            Trace.Assert(System.Runtime.GCSettings.IsServerGC);
         }
 
         static void Main(string[] args)
