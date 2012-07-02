@@ -10,10 +10,8 @@ typedef HTTP_LISTENER *PHTTP_LISTENER;
 
 typedef void (*HttpIoCompletionRoutine)(PHTTP_IO_CONTEXT);
 typedef DWORD (*HttpListenerOnRequest)(PHTTP_LISTENER, PHTTP_REQUEST);
-
 #define HTTP_LISTENER_MAX_PENDING_RECEIVES 10
-#define REQUEST_BUFFER_SIZE 4096  
-
+#define REQUEST_BUFFER_SIZE 4096
 
 enum HTTP_LISTENER_STATE
 {		
@@ -33,21 +31,19 @@ typedef struct DECLSPEC_CACHEALIGN _LISTENER_STATS
 
 typedef struct _HTTP_LISTENER
 {
-	 _TCHAR** 				urls;
-	int						urlsCount;
-	HANDLE					hRequestQueue;
-	HTTP_URL_GROUP_ID		urlGroupId;
-	HTTP_SERVER_SESSION_ID	sessionId;
-	PTP_IO					pthreadPoolIO;
-	DWORD					errorCode;
-	ULONG					state; //HTTP_LISTENER_STATE	
+	 _TCHAR** 				urls;					// TODO:#5 Url cleanup
+	int						urlsCount;				// TODO:#5 Url cleanup
+	ULONG					state;					// HTTP_LISTENER_STATE	
+	HTTP_URL_GROUP_ID		UrlGroupId;				// Url groups used by the Listener
+	HTTP_SERVER_SESSION_ID	SessionId;				// Server Session for the listener.	
+	HANDLE					hRequestQueue;			// TODO:#6 Request queue size needs to be tweaked
+	PTP_IO					pthreadPoolIO;			// ThreadPool IO object used for request demuxing
+	TP_CALLBACK_ENVIRON		tpEnvironment;			// ThreadPool callback environment
+	PTP_POOL				pThreadPool;			// ThreadPool instance
+	DWORD					errorCode;				// Error code during starting/ faulting.
 	HttpListenerOnRequest	OnRequestReceiveHandler;
-	PLISTENER_STATS			stats;
-
-	TP_CALLBACK_ENVIRON tpEnvironment;
-	PTP_POOL global_pThreadPool;
+	PLISTENER_STATS			stats;		
 } HTTP_LISTENER;
-
 
 DWORD
 CreateHttpListener(

@@ -13,8 +13,7 @@
 
 typedef struct DECLSPEC_CACHEALIGN _LOOKASIDE
 {
-	SLIST_HEADER Header;
-	LONGLONG Length;
+	SLIST_HEADER Header;	
 } LOOKASIDE, *PLOOKASIDE;
 
 typedef struct _IO_CONTEXT
@@ -54,7 +53,6 @@ HttpListenerOnRequestDequeued(
 	PHTTP_LISTENER listener
 );
 
-
 void 
 HttpListenerOnRequestCompleted(
 	PHTTP_IO_CONTEXT listener
@@ -83,7 +81,7 @@ HRESULT HttpListenerInitializeThreadPool(PHTTP_LISTENER listener)
 		dwResult = HRESULT_FROM_WIN32(GetLastError());
 	}
 
-	listener->global_pThreadPool = pThreadPool;
+	listener->pThreadPool = pThreadPool;
 	listener->errorCode = dwResult;
 	return dwResult;
 }
@@ -209,8 +207,7 @@ HttpRequestIocompletion
 		pRequestContext->IsCompleted++;
 		pRequestContext->ErrorCode = dwResult;
 		HttpListenerOnRequestCompleted(pRequestContext);
-	}
-	
+	}	
 }
 
 DWORD
@@ -264,6 +261,7 @@ EnqueueReceive
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion	
+		// TODO:#4 Add to coalescing queue.
 		QueueUserWorkItem(HttpListenerIOCompletion,
 							pListenerRequest, 
 							NULL);
@@ -334,7 +332,7 @@ CreateHttpListener(
 	if(result == NO_ERROR)
 	{
 		result = HttpCreateServerSession(HttpApiVersion,
-										&_listener->sessionId, 
+										&_listener->SessionId, 
 										NULL); 
 		if(result)
 		{		
@@ -392,10 +390,10 @@ StartHttpListener(
 	int UrlAdded = 0;	
 	DWORD result;
 	
-	ZeroMemory(&_listener->urlGroupId, sizeof(HTTP_URL_GROUP_ID));
+	ZeroMemory(&_listener->UrlGroupId, sizeof(HTTP_URL_GROUP_ID));
 	result = HttpCreateUrlGroup(
-				_listener->sessionId, 
-				&_listener->urlGroupId, 
+				_listener->SessionId, 
+				&_listener->UrlGroupId, 
 				NULL);
 	if(result)
 	{		
@@ -408,7 +406,7 @@ StartHttpListener(
 	httpBinding.RequestQueueHandle = _listener->hRequestQueue;
 	httpBinding.Flags.Present = true;
 	result = HttpSetUrlGroupProperty(
-						_listener->urlGroupId, 
+						_listener->UrlGroupId, 
 						HttpServerBindingProperty, 
 						&httpBinding, 
 						sizeof(httpBinding));
@@ -419,7 +417,7 @@ StartHttpListener(
         wprintf(L"we are listening for requests on the following url: %s\n", urls[i]);
 
         result = HttpAddUrlToUrlGroup(
-									_listener->urlGroupId,
+									_listener->UrlGroupId,
 									urls[i],
 									NULL,
 									NULL);
@@ -535,7 +533,7 @@ SendHttpResponse(
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion		
-		// TODO: Response synccompletion can actually be completed inline 
+		// TODO:#4 Response synccompletion can actually be completed inline 
 		QueueUserWorkItem(HttpListenerIOCompletion,
 							pResponseContext, 
 							NULL);
@@ -599,7 +597,7 @@ void DisposeHttpListener(PHTTP_LISTENER listener)
 			for(int i=1; i<=listener->urlsCount; i++)
 			{
 				HttpRemoveUrlFromUrlGroup(
-					  listener->urlGroupId,     // Req Queue
+					  listener->UrlGroupId,     // Req Queue
 					  listener->urls[i],        // Fully qualified URL
 					  NULL);
 			}
