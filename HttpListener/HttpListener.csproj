@@ -8,8 +8,8 @@
     <ProjectGuid>{74BC5F56-DF5A-4809-A4D0-0BA06AF8CA47}</ProjectGuid>
     <OutputType>Exe</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>ManagedHttpListener</RootNamespace>
-    <AssemblyName>ManagedHttpListener</AssemblyName>
+    <RootNamespace>HttpListener</RootNamespace>
+    <AssemblyName>HttpListener</AssemblyName>
     <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
     <TargetFrameworkProfile>Client</TargetFrameworkProfile>
     <FileAlignment>512</FileAlignment>

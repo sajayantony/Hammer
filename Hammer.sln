@@ -1,10 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 11.00
 # Visual Studio 2010
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ManagedHttpListener", "ManagedHttpListener\ManagedHttpListener.csproj", "{74BC5F56-DF5A-4809-A4D0-0BA06AF8CA47}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HttpListener", "HttpListener\HttpTest.vcxproj", "{76A32EFE-8DF4-4730-B1B1-DAC0A015840F}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{B9CF3585-7165-45F9-B2C8-AC9ADE4C7551}"
 	ProjectSection(SolutionItems) = preProject
 		ReadMe.md = ReadMe.md
@@ -20,6 +16,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Test", "Test", "{AB289A66-F
 		Test\client.ubr = Test\client.ubr
 		Test\settings.ubr = Test\settings.ubr
 	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HttpListener", "HttpListener\HttpListener.csproj", "{74BC5F56-DF5A-4809-A4D0-0BA06AF8CA47}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Hammer", "Hammer\Hammer.vcxproj", "{76A32EFE-8DF4-4730-B1B1-DAC0A015840F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

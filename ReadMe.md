@@ -13,17 +13,17 @@ Http Server implementation using System.Net which returns a 500 byte payload on 
 wcat is used to run these tests using the settings.ubr and the client.ubr files.
 
 - Start the Controller
-```
-start wcctl.exe -t client.ubr -f settings.ubr -s %COMPUTERNAME% -v 20 -c 5 -o output.xml -x 
-```
 
-- Start Clients 
+	```
+	start wcctl.exe -t client.ubr -f settings.ubr -s %COMPUTERNAME% -v 30 -c 4 -o output.xml -x 
+	```
 
-Run this on each client machine 
+- Start Clients
 
-```
-for /l %%i in (1,1,5) do start wcclient.exe <controllerName>
-```
+	Run this on each client machine 
+	```
+	wcclient.exe <controllerName>
+	```
 
 
 ## References ##
