@@ -3,7 +3,7 @@
 #include <http.h>
 
 #define MAX_IO_CONTEXT_PROCESSOR_CACHE 256
-
+#define IO_CONTEXT_PROC_INDEX GetCurrentProcessorNumber() % MAX_IO_CONTEXT_PROCESSOR_CACHE
 #define ALLOC_MEM(x) HeapAlloc(GetProcessHeap(), 0, (x))  
 #define FREE_MEM(x) HeapFree(GetProcessHeap(), 0, (x)) 
 
@@ -37,16 +37,43 @@ typedef struct _IO_CONTEXT
 
 DECLSPEC_CACHEALIGN LOOKASIDE IoContextCacheList[MAX_IO_CONTEXT_PROCESSOR_CACHE];
 
+// TODO: Store this onto the IoContextCache
+DECLSPEC_CACHEALIGN LOOKASIDE HttpInputQueue;
+
+void InitializeHttpInputQueue()
+{
+	InitializeSListHead(&HttpInputQueue.Header);
+}
+
+void HttpInputQueueEnqueue(PHTTP_IO_CONTEXT context)
+{
+	InterlockedPushEntrySList(&HttpInputQueue.Header,
+							 &context->LookAsideEntry);
+}
+
+void HttpInputQueueDrain()
+{
+	PHTTP_IO_CONTEXT context;
+	PSLIST_ENTRY entry;
+
+	while(true)
+	{
+		entry = InterlockedPopEntrySList(&HttpInputQueue.Header);
+		if(entry != NULL)
+		{
+			context = CONTAINING_RECORD(entry, HTTP_IO_CONTEXT, LookAsideEntry);
+			context->CompletionRoutine(context);
+		}
+		else
+		{
+			break;
+		}
+	}
+}
+
 //
 // Prototypes 
 //
-void CALLBACK 
-HttpListenerDemuxer(
-	PTP_CALLBACK_INSTANCE instance, 
-	PVOID context, 
-	PVOID lpOverlapped, 
-	ULONG errorcode, 
-	ULONG_PTR NumberOfBytes, PTP_IO);
 
 void 
 HttpListenerOnRequestDequeued(
@@ -107,7 +134,7 @@ PHTTP_IO_CONTEXT GetIOContext()
 	PLOOKASIDE pCacheEntry;
 	PSLIST_ENTRY pEntry;
 
-	pCacheEntry = &IoContextCacheList[GetCurrentProcessorNumber() % MAX_IO_CONTEXT_PROCESSOR_CACHE];
+	pCacheEntry = &IoContextCacheList[IO_CONTEXT_PROC_INDEX];
 	pEntry = InterlockedPopEntrySList(&pCacheEntry->Header);
 	if(pEntry != NULL)
 	{
@@ -126,9 +153,8 @@ PHTTP_IO_CONTEXT GetIOContext()
 
 void ReturnIOContext(PHTTP_IO_CONTEXT context)
 {
-	PLOOKASIDE cacheEntry = &IoContextCacheList[GetCurrentProcessorNumber() % MAX_IO_CONTEXT_PROCESSOR_CACHE];
-	PSLIST_ENTRY first = InterlockedPushEntrySList(&cacheEntry->Header, &context->LookAsideEntry);	
-	
+	PLOOKASIDE cacheEntry = &IoContextCacheList[IO_CONTEXT_PROC_INDEX];
+	InterlockedPushEntrySList(&cacheEntry->Header, &context->LookAsideEntry);		
 }
 
 void CALLBACK HttpListenerDemuxer
@@ -145,6 +171,10 @@ void CALLBACK HttpListenerDemuxer
 	pListenerRequest->NumberOfBytes = (DWORD)NumberOfBytes;
 	pListenerRequest->ErrorCode = errorcode;
 	pListenerRequest->CompletionRoutine(pListenerRequest);	
+
+	// flush all competed requests.
+	HttpInputQueueDrain();
+
 	return;
 }
 
@@ -261,10 +291,7 @@ EnqueueReceive
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion	
-		// TODO:#4 Add to coalescing queue.
-		QueueUserWorkItem(HttpListenerIOCompletion,
-							pListenerRequest, 
-							NULL);
+		HttpInputQueueEnqueue(pListenerRequest);
 	}
 	else
 	{	
@@ -301,6 +328,7 @@ CreateHttpListener(
 	ULONG           result;
 
 	InitializeIOContextCache();
+	InitializeHttpInputQueue();
 
 	PHTTP_LISTENER _listener = (PHTTP_LISTENER)ALLOC_MEM(sizeof(HTTP_LISTENER)); 
 	ZeroMemory(_listener, sizeof(HTTP_LISTENER));
@@ -314,7 +342,7 @@ CreateHttpListener(
 	_listener->stats = (PLISTENER_STATS)_aligned_malloc(sizeof(LISTENER_STATS),MEMORY_ALLOCATION_ALIGNMENT);
 	HTTPAPI_VERSION HttpApiVersion = HTTPAPI_VERSION_2;	
 
-	 //
+	//
     // Initialize HTTP APIs.
     //
     result = HttpInitialize( 
@@ -533,10 +561,7 @@ SendHttpResponse(
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion		
-		// TODO:#4 Response synccompletion can actually be completed inline 
-		QueueUserWorkItem(HttpListenerIOCompletion,
-							pResponseContext, 
-							NULL);
+		HttpInputQueueEnqueue(pResponseContext);
 	}
 	else
 	{	
