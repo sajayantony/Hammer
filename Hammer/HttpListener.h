@@ -33,7 +33,7 @@ typedef struct _HTTP_LISTENER
 {
 	 _TCHAR** 				urls;					// TODO:#5 Url cleanup
 	int						urlsCount;				// TODO:#5 Url cleanup
-	ULONG					state;					// HTTP_LISTENER_STATE	
+	DWORD					State;					// HTTP_LISTENER_STATE	
 	HTTP_URL_GROUP_ID		UrlGroupId;				// Url groups used by the Listener
 	HTTP_SERVER_SESSION_ID	SessionId;				// Server Session for the listener.	
 	HANDLE					hRequestQueue;			// TODO:#6 Request queue size needs to be tweaked

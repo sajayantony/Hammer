@@ -1,11 +1,11 @@
 Simple Http Server implementation comparisons
 ==========
 
-## HttpListener ##
+## Hammer ##
 Project used to start a Http Server that responds back a 500 byte payload response over http://+:80/Server/
  - The Server is based of HTTP Server Version 2.0
 
-## ManagedHttpListener ##
+## HttpListener ##
 Http Server implementation using System.Net which returns a 500 byte payload on a GetRequest without body to http://+:80/server
 
 ## Test ##

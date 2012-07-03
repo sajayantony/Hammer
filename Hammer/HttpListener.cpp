@@ -334,7 +334,7 @@ CreateHttpListener(
 	_listener->errorCode = 0;
 	_listener->urls = NULL;
 	_listener->pthreadPoolIO = NULL;
-	_listener->state = HTTP_LISTENER_STATE_FAULTED;	
+	_listener->State = HTTP_LISTENER_STATE_FAULTED;	
 	_listener->stats = (PLISTENER_STATS)_aligned_malloc(sizeof(LISTENER_STATS),MEMORY_ALLOCATION_ALIGNMENT);
 	HTTPAPI_VERSION HttpApiVersion = HTTPAPI_VERSION_2;	
 
@@ -487,7 +487,7 @@ StartHttpListener(
 
 	if(result == NO_ERROR)
 	{
-		_listener->state = HTTP_LISTENER_STATE_STARTED;		
+		_listener->State = HTTP_LISTENER_STATE_STARTED;		
 	}
 
 	return result;
@@ -589,7 +589,7 @@ void HttpListenerOnRequestDequeued(PHTTP_LISTENER listener)
 	ULONG pendingReceives = InterlockedDecrement(&listener->stats->ulPendingReceives);
 	ULONG state;
 	// Check if the pump should shut down
-	if( (state = InterlockedCompareExchange(&listener->state, 
+	if( (state = InterlockedCompareExchange(&listener->State, 
 								HTTP_LISTENER_STATE_STARTED, 
 								HTTP_LISTENER_STATE_STARTED)) == HTTP_LISTENER_STATE_STARTED) // Last pending receive
 	{
@@ -605,7 +605,8 @@ void HttpListenerOnRequestDequeued(PHTTP_LISTENER listener)
 	{
 		return;
 	}
-	else {
+	else 
+	{
 		// We should never reach this
 		DEBUG_ASSERT(false);
 	}
@@ -625,7 +626,7 @@ void HttpListenerOnRequestCompleted(PHTTP_IO_CONTEXT plistenerRequest)
 
 void DisposeHttpListener(PHTTP_LISTENER listener)
 {	
-	ULONG state = InterlockedCompareExchange(&listener->state, 
+	ULONG state = InterlockedCompareExchange(&listener->State, 
 											HTTP_LISTENER_STATE_DISPOSING, 
 											HTTP_LISTENER_STATE_STARTED);
 	if(state = HTTP_LISTENER_STATE_STOPPED)
@@ -660,7 +661,7 @@ void DisposeHttpListener(PHTTP_LISTENER listener)
 	else if (state == HTTP_LISTENER_STATE_DISPOSING)
 	{
 		// Only one thread can dispose the listener	
-		if(InterlockedCompareExchange(&listener->state, 
+		if(InterlockedCompareExchange(&listener->State, 
 									HTTP_LISTENER_STATE_STOPPED, 
 									HTTP_LISTENER_STATE_DISPOSING) == HTTP_LISTENER_STATE_DISPOSING)
 		{		
