@@ -37,6 +37,7 @@ typedef struct _HTTP_LISTENER
 	HTTP_URL_GROUP_ID		UrlGroupId;				// Url groups used by the Listener
 	HTTP_SERVER_SESSION_ID	SessionId;				// Server Session for the listener.	
 	HANDLE					hRequestQueue;			// TODO:#6 Request queue size needs to be tweaked
+	ULONG					RequestQueueLength;		// Request queue lenght property
 	PTP_IO					pthreadPoolIO;			// ThreadPool IO object used for request demuxing
 	TP_CALLBACK_ENVIRON		tpEnvironment;			// ThreadPool callback environment
 	PTP_POOL				pThreadPool;			// ThreadPool instance

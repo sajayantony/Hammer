@@ -56,6 +56,20 @@ HandleRequest(
 	DWORD result = SendHttpResponse(
 							pRequest,
 							pContext, 
+							100,
+							"OK",
+							global_responseBuffer,
+							"500"
+							);
+
+	if(result != NO_ERROR)
+	{
+		DisplayWin32Error(result);
+	}
+
+		 result = SendHttpResponse(
+							pRequest,
+							pContext, 
 							200,
 							"OK",
 							global_responseBuffer,

@@ -18,16 +18,15 @@ typedef struct DECLSPEC_CACHEALIGN _LOOKASIDE
 
 typedef struct _IO_CONTEXT
 {
-	SLIST_ENTRY LookAsideEntry;
-	OVERLAPPED Overlapped;
+	SLIST_ENTRY				LookAsideEntry;
+	OVERLAPPED				Overlapped;
 	HttpIoCompletionRoutine CompletionRoutine;
-	DWORD			   operationState;
-	PHTTP_LISTENER	   listener;				
-    HTTP_REQUEST_ID    requestId;
-    DWORD              NumberOfBytes;    
-	DWORD			   ErrorCode;
-    DWORD              requestSize;
-	DWORD			   IsCompleted;	
+	USHORT					operationState;
+	PHTTP_LISTENER			listener;  
+    DWORD					NumberOfBytes;    
+	DWORD					ErrorCode;
+    DWORD					RequestSize;
+	HTTP_REQUEST_ID			requestId;
 	union {  
 		HTTP_RESPONSE Reponse;
         HTTP_REQUEST Request;  
@@ -104,7 +103,7 @@ HRESULT HttpListenerInitializeThreadPool(PHTTP_LISTENER listener)
 	}
 	else
 	{
-		SetThreadpoolCallbackPool(&tpCalbackEnviron, pThreadPool );	
+		SetThreadpoolCallbackPool(&tpCalbackEnviron, pThreadPool);	
 		dwResult = HRESULT_FROM_WIN32(GetLastError());
 	}
 
@@ -146,8 +145,7 @@ PHTTP_IO_CONTEXT GetIOContext()
 		pContext = (PHTTP_IO_CONTEXT)ALLOC_MEM(sizeof(HTTP_IO_CONTEXT));			
 	}
 
-	ZeroMemory(pContext, sizeof(HTTP_IO_CONTEXT));
-
+	ZeroMemory(pContext, sizeof(HTTP_IO_CONTEXT));	
 	return pContext;
 }
 
@@ -174,7 +172,6 @@ void CALLBACK HttpListenerDemuxer
 
 	// flush all competed requests.
 	HttpInputQueueDrain();
-
 	return;
 }
 
@@ -199,7 +196,6 @@ HttpRequestIocompletion
 	PHTTP_REQUEST pRequest = &(pRequestContext->Request);
 
 	DEBUG_ASSERT(pListener != NULL);
-	DEBUG_ASSERT(pRequestContext->IsCompleted == 0);
 	HttpListenerOnRequestDequeued(pListener);
 				
 	if(pRequestContext->ErrorCode == NO_ERROR)
@@ -234,7 +230,6 @@ HttpRequestIocompletion
 	}
 	else 
 	{
-		pRequestContext->IsCompleted++;
 		pRequestContext->ErrorCode = dwResult;
 		HttpListenerOnRequestCompleted(pRequestContext);
 	}	
@@ -252,7 +247,7 @@ EnqueueReceive
 	PHTTP_IO_CONTEXT pListenerRequest = GetIOContext();	
 	
     // TODO fix allocation of the request buffer
-	pListenerRequest->requestSize = REQUEST_BUFFER_SIZE;
+	pListenerRequest->RequestSize = REQUEST_BUFFER_SIZE;
 
     if (pListenerRequest == NULL)
     {
@@ -263,10 +258,9 @@ EnqueueReceive
 	pListenerRequest->Overlapped.Pointer = pListenerRequest;
 	pListenerRequest->listener = listener;	
 	pListenerRequest->CompletionRoutine = HttpRequestIocompletion;	
-    pListenerRequest->requestSize  = REQUEST_BUFFER_SIZE;
+    pListenerRequest->RequestSize  = REQUEST_BUFFER_SIZE;
 	HTTP_SET_NULL_ID(&pListenerRequest->requestId);
 	pListenerRequest->operationState = HTTP_LISTENER_STATE_REQUEST;
-	pListenerRequest->IsCompleted = 0;
     
 	// Enqueue async IO Request.
 	StartThreadpoolIo(listener->pthreadPoolIO);
@@ -276,7 +270,7 @@ EnqueueReceive
                 pListenerRequest->requestId,		// Req ID
                 0,									// Flags
 				&pListenerRequest->Request,			// HTTP request buffer
-                pListenerRequest->requestSize,		// req buffer length
+                pListenerRequest->RequestSize,		// req buffer length
                 NULL,								// bytes received
                 &pListenerRequest->Overlapped		// LPOVERLAPPED
                 );
@@ -291,6 +285,7 @@ EnqueueReceive
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion	
+		CancelThreadpoolIo(listener->pthreadPoolIO); 
 		HttpInputQueueEnqueue(pListenerRequest);
 	}
 	else
@@ -335,7 +330,8 @@ CreateHttpListener(
 	(*httpListener) = _listener;
 
 	_listener->hRequestQueue = NULL;
-	_listener->errorCode =0;
+	_listener->RequestQueueLength = 5000; // Default request queue length;
+	_listener->errorCode = 0;
 	_listener->urls = NULL;
 	_listener->pthreadPoolIO = NULL;
 	_listener->state = HTTP_LISTENER_STATE_FAULTED;	
@@ -380,11 +376,26 @@ CreateHttpListener(
 			LOG_ERROR(L"\nHttpCreateRequestQueue failed with %lu", result);				
 		}
 	}
+
+	if(result == NO_ERROR)
+	{
+		result = HttpSetRequestQueueProperty(_listener->hRequestQueue, 
+											HttpServerQueueLengthProperty, 
+											&_listener->RequestQueueLength,
+											sizeof(_listener->RequestQueueLength),
+											NULL,
+											NULL);
+		if(result)
+		{
+			LOG_ERROR(L"\nHttpSetRequestQueueProperty failed with %lu", result);				
+		}
+	}
 	
 	if(result == NO_ERROR)
 	{
 		if(SetFileCompletionNotificationModes(_listener->hRequestQueue, 
-			FILE_SKIP_COMPLETION_PORT_ON_SUCCESS) == FALSE)
+											FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | 
+											FILE_SKIP_SET_EVENT_ON_HANDLE) == FALSE)
 		{
 			result = GetLastError();			
 		}
@@ -562,6 +573,7 @@ SendHttpResponse(
 	else if(result == NO_ERROR)
 	{		
 		// Synchronous completion		
+		CancelThreadpoolIo(listener->pthreadPoolIO);
 		HttpInputQueueEnqueue(pResponseContext);
 	}
 	else
@@ -613,10 +625,17 @@ void HttpListenerOnRequestCompleted(PHTTP_IO_CONTEXT plistenerRequest)
 
 void DisposeHttpListener(PHTTP_LISTENER listener)
 {	
-	ULONG state;
-	if((state = InterlockedCompareExchange(&listener->state, 
-								HTTP_LISTENER_STATE_DISPOSING, 
-								HTTP_LISTENER_STATE_STARTED) )== HTTP_LISTENER_STATE_STARTED)
+	ULONG state = InterlockedCompareExchange(&listener->state, 
+											HTTP_LISTENER_STATE_DISPOSING, 
+											HTTP_LISTENER_STATE_STARTED);
+	if(state = HTTP_LISTENER_STATE_STOPPED)
+	{
+		return;
+	}
+
+
+	// Thread responsible for disposing the listener.
+	if(state = HTTP_LISTENER_STATE_STARTED)
 	{		
 		if(listener && listener->hRequestQueue)
 		{
@@ -637,26 +656,22 @@ void DisposeHttpListener(PHTTP_LISTENER listener)
 		//
 		HttpTerminate(HTTP_INITIALIZE_SERVER, NULL);
 		return;
-	}
-
-
-	if(state = HTTP_LISTENER_STATE_STOPPED)
+	} 
+	else if (state == HTTP_LISTENER_STATE_DISPOSING)
 	{
-		return;
-	}
-
-	// Only one thread can dispose the listener	
-	if(InterlockedCompareExchange(&listener->state, 
-								HTTP_LISTENER_STATE_STOPPED, 
-								HTTP_LISTENER_STATE_DISPOSING) == HTTP_LISTENER_STATE_DISPOSING)
-	{		
-		//
-		// Cleanup threadpool 
-		//
-		HttpListenerCleanupThreadPool(listener);		
+		// Only one thread can dispose the listener	
+		if(InterlockedCompareExchange(&listener->state, 
+									HTTP_LISTENER_STATE_STOPPED, 
+									HTTP_LISTENER_STATE_DISPOSING) == HTTP_LISTENER_STATE_DISPOSING)
+		{		
+			//
+			// Cleanup threadpool 
+			//
+			HttpListenerCleanupThreadPool(listener);		
 		
-		// Free the listener
-		FREE_MEM(listener);
-		printf("Http listener terminated...\n");
+			// Free the listener
+			FREE_MEM(listener);
+			printf("Http listener terminated...\n");
+		}
 	}
 }
