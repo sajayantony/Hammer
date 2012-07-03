@@ -4,7 +4,6 @@
 #include "stdafx.h"
 #include "HttpListener.h"
 
-DWORD HandleRequest(PHTTP_LISTENER, PHTTP_REQUEST);
 // 
 // Test data 
 // 
@@ -50,13 +49,13 @@ void DisplayWin32Error(DWORD NTStatusMessage)
 
 DWORD 
 HandleRequest(
-	PHTTP_LISTENER pListener,
-	PHTTP_REQUEST pRequest
+	PHTTP_REQUEST pRequest,
+	PHTTP_IO_CONTEXT pContext
 )
 {   
 	DWORD result = SendHttpResponse(
-							pListener,
-							pRequest, 
+							pRequest,
+							pContext, 
 							200,
 							"OK",
 							global_responseBuffer,

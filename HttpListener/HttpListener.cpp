@@ -207,14 +207,14 @@ HttpRequestIocompletion
 		PHTTP_LISTENER plistener = pRequestContext->listener;
 		if(plistener->OnRequestReceiveHandler != NULL)
 		{
-			dwResult = plistener->OnRequestReceiveHandler(pRequestContext->listener, 
-															&pRequestContext->Request);
+			dwResult = plistener->OnRequestReceiveHandler(&pRequestContext->Request, 
+															pRequestContext);
 		}
 		else
 		{
 			dwResult = SendHttpResponse(
-							plistener,
-							pRequest, 
+							pRequest,
+							pRequestContext, 
 							200,
 							"OK",
 							"ECHO",
@@ -493,20 +493,21 @@ HttpListenerResponseIocompletion
 }
 
 DWORD
-SendHttpResponse(
-    IN PHTTP_LISTENER listener,
-    IN PHTTP_REQUEST  pRequest,
-    IN USHORT         StatusCode,
-    IN PSTR           pReason,
-    IN PSTR           pEntityString,
-	IN PSTR			  pContentLength
+SendHttpResponse(    
+    IN PHTTP_REQUEST	pRequest,
+	IN PHTTP_IO_CONTEXT pContext,
+    IN USHORT			StatusCode,
+    IN PSTR				pReason,
+    IN PSTR				pEntityString,
+	IN PSTR				pContentLength
     )
 {    
-	PHTTP_IO_CONTEXT pResponseContext = GetIOContext();
     HTTP_DATA_CHUNK dataChunk;
     DWORD           result;
+	PHTTP_LISTENER listener = pContext->listener;
+	PHTTP_IO_CONTEXT pResponseContext = GetIOContext();
 
-    //
+	//
     // Initialize the HTTP response structure.
     //	
     pResponseContext->Reponse.StatusCode = (StatusCode);     
@@ -606,7 +607,7 @@ void HttpListenerOnRequestCompleted(PHTTP_IO_CONTEXT plistenerRequest)
 	ULONG activeRequest;
 	activeRequest = InterlockedDecrement(&listener->stats->ulActiveRequests);
 
-	// TODO: Clean up request
+	// We are done with the RequestContext;
 	ReturnIOContext(plistenerRequest);
 }
 
