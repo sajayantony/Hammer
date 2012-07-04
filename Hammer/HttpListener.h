@@ -1,17 +1,48 @@
+#pragma once
 #include "stdafx.h"
 
 #define REQUEST_BUFFER_SIZE 4096  
+#define HTTP_LISTENER_MAX_PENDING_RECEIVES 10
+#define REQUEST_BUFFER_SIZE 4096
+
+#define MAX_IO_CONTEXT_PROCESSOR_CACHE 256
+#define IO_CONTEXT_PROC_INDEX GetCurrentProcessorNumber() % MAX_IO_CONTEXT_PROCESSOR_CACHE
+#define ALLOC_MEM(x) HeapAlloc(GetProcessHeap(), 0, (x))  
+#define FREE_MEM(x) HeapFree(GetProcessHeap(), 0, (x)) 
+
+#define DEBUG_ASSERT(expression) if(!(expression)) DebugBreak();
+#define __TRACE_ERROR(NtErrorStatus) DisplayWin32Error((NtErrorStatus))
+#define LOG_ERROR(formatStringMessage,errorCode) wprintf((formatStringMessage),(errorCode)); __TRACE_ERROR(errorCode);
 
 typedef struct _IO_CONTEXT HTTP_IO_CONTEXT;
 typedef struct _IO_CONTEXT* PHTTP_IO_CONTEXT;
 typedef struct _HTTP_LISTENER HTTP_LISTENER;
 typedef HTTP_LISTENER *PHTTP_LISTENER;
 
-
 typedef void (*HttpIoCompletionRoutine)(PHTTP_IO_CONTEXT);
 typedef DWORD (*HttpListenerOnRequest)(PHTTP_REQUEST, PHTTP_IO_CONTEXT);
-#define HTTP_LISTENER_MAX_PENDING_RECEIVES 10
-#define REQUEST_BUFFER_SIZE 4096
+
+typedef struct DECLSPEC_CACHEALIGN _LOOKASIDE
+{
+	SLIST_HEADER Header;	
+} LOOKASIDE, *PLOOKASIDE;
+
+typedef struct _IO_CONTEXT : OVERLAPPED
+{
+	SLIST_ENTRY				LookAsideEntry;
+	HttpIoCompletionRoutine CompletionRoutine; // Future
+	USHORT					operationState;
+	PHTTP_LISTENER			listener;  
+    DWORD					NumberOfBytes;    
+	DWORD					IoResult;
+    DWORD					RequestSize;
+	HTTP_REQUEST_ID			requestId;
+	union {  
+		HTTP_RESPONSE Reponse;
+        HTTP_REQUEST Request;  
+        UCHAR RequestBuffer[REQUEST_BUFFER_SIZE];  
+    };  
+} HTTP_IO_CONTEXT, *PHTTP_IO_CONTEXT;
 
 enum HTTP_LISTENER_STATE
 {		
@@ -44,6 +75,7 @@ typedef struct _HTTP_LISTENER
 	DWORD					errorCode;				// Error code during starting/ faulting.
 	HttpListenerOnRequest	OnRequestReceiveHandler;
 	PLISTENER_STATS			stats;		
+	PLOOKASIDE				HttpInputQueue;
 } HTTP_LISTENER;
 
 DWORD
