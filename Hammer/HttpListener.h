@@ -24,7 +24,7 @@ typedef DWORD (*HttpListenerOnRequest)(PHTTP_REQUEST, PHTTP_IO_CONTEXT);
 
 typedef struct DECLSPEC_CACHEALIGN _LOOKASIDE
 {
-	SLIST_HEADER Header;	
+	SLIST_HEADER Header;
 } LOOKASIDE, *PLOOKASIDE;
 
 typedef struct _IO_CONTEXT : OVERLAPPED
@@ -76,6 +76,9 @@ typedef struct _HTTP_LISTENER
 	HttpListenerOnRequest	OnRequestReceiveHandler;
 	PLISTENER_STATS			stats;		
 	PLOOKASIDE				HttpInputQueue;
+	ULONG					LookAsideFlushPeriod;	//The IOContextLook aside cache flush period.  
+	HANDLE					TimerQueue;
+	HANDLE					FlushTimer;
 } HTTP_LISTENER;
 
 DWORD

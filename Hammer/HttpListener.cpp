@@ -4,9 +4,7 @@
 
 DECLSPEC_CACHEALIGN LOOKASIDE IoContextCacheList[MAX_IO_CONTEXT_PROCESSOR_CACHE +1];
 
-
 void HttpListenerCompleteIo(PHTTP_IO_CONTEXT context);
-
 
 void InitializeHttpInputQueue(PHTTP_LISTENER listener)
 {
@@ -45,7 +43,6 @@ void HttpInputQueueDrain(PHTTP_LISTENER listener)
 //
 // Prototypes 
 //
-
 void 
 HttpListenerOnRequestDequeued(
 	PHTTP_LISTENER listener
@@ -376,6 +373,31 @@ CreateHttpListener(
 	return _listener->errorCode;
 }
 
+VOID CALLBACK 
+HttpListenerFlushLookasideThreadProc(
+  __in  PVOID lpParameter,
+  __in  BOOLEAN TimerOrWaitFired
+)
+{  
+	PHTTP_LISTENER listener = (PHTTP_LISTENER)lpParameter;
+    ULONG Index;  
+    PSLIST_ENTRY List;  
+    PSLIST_ENTRY NextEntry;  
+   
+	// TODO: Queue on timer
+	printf("Freeing context\n");          
+    for (Index = 0; Index < MAX_IO_CONTEXT_PROCESSOR_CACHE; Index++)  
+    {              
+        List = InterlockedFlushSList(&IoContextCacheList[Index].Header);            
+        while (List != NULL)  
+        {
+            NextEntry = List->Next;  
+			FREE_MEM(CONTAINING_RECORD(List, HTTP_IO_CONTEXT, LookAsideEntry));  
+            List = NextEntry;  
+        }                
+    }  
+}  
+
 DWORD 
 StartHttpListener(
 	PHTTP_LISTENER _listener,
@@ -440,6 +462,30 @@ StartHttpListener(
 		{
 			break;
 		}
+	}
+
+	_listener->TimerQueue = CreateTimerQueue();
+	_listener->LookAsideFlushPeriod = 5 *1000;
+	if(_listener->TimerQueue != INVALID_HANDLE_VALUE)
+	{
+		if(CreateTimerQueueTimer(&_listener->FlushTimer, 
+						_listener->TimerQueue, 
+						HttpListenerFlushLookasideThreadProc, 
+						_listener, 
+						_listener->LookAsideFlushPeriod, 
+						_listener->LookAsideFlushPeriod, 
+						NULL) != FALSE)
+		{
+			result = NO_ERROR;
+		}
+		else
+		{
+			result = GetLastError();
+		}
+	}
+	else
+	{
+		result = GetLastError();
 	}
 
 	if(result == NO_ERROR)
@@ -603,7 +649,6 @@ void DisposeHttpListener(PHTTP_LISTENER listener)
 		return;
 	}
 
-
 	// Thread responsible for disposing the listener.
 	if(state = HTTP_LISTENER_STATE_STARTED)
 	{		
@@ -639,6 +684,11 @@ void DisposeHttpListener(PHTTP_LISTENER listener)
 			//
 			HttpListenerCleanupThreadPool(listener);		
 		
+			//Delete timers and release the IOContexts
+			DeleteTimerQueueTimer(listener->TimerQueue, listener->FlushTimer,NULL);
+			DeleteTimerQueue(listener->TimerQueue);
+			HttpListenerFlushLookasideThreadProc(listener,NULL);
+
 			// Free the listener
 			FREE_MEM(listener);
 			printf("Http listener terminated...\n");
