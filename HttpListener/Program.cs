@@ -19,18 +19,18 @@
         // When the native operation completes it signals HttpListener, which did postprocessing 
         // and then invoked your callback. 10 threads may not be enough due to the postprocessing lag her 
         // and hence we use a processor multiplier. 
-        internal readonly int maxPendingGetContexts = 10 * Environment.ProcessorCount;
+        internal readonly int MaxPendingGetContexts = 10 * Environment.ProcessorCount;
 
-        string prefix;
-        BufferPool bufferPool;
-        byte[] responseData;
-        bool enqueueOnReceive;
-        HttpListener listener;
-        AsyncCallback onGetContext;
-        AsyncCallback onReceiveComplete, onWriteComplete;
-        WaitCallback onGetContextlater;
-        readonly bool readBody;
-        readonly bool sendResponseOnClose;
+        readonly string _prefix;
+        readonly BufferPool _bufferPool;
+        readonly byte[] _responseData;
+        readonly bool _enqueueOnReceive;
+        readonly AsyncCallback _onGetContext;
+        readonly AsyncCallback _onReceiveComplete, _onWriteComplete;
+        readonly WaitCallback _onGetContextlater;
+        readonly bool _readBody;
+        readonly bool _sendResponseOnClose;
+        HttpListener _listener;
 
         public HttpServer(int maxPendingContexts,
                             string serverUri, 
@@ -38,34 +38,34 @@
                             bool enqueueOnReceive, 
                             bool sendResponseOnClose)
         {
-            this.readBody = readBody;
-            this.maxPendingGetContexts = maxPendingContexts;
-            this.enqueueOnReceive = enqueueOnReceive;
-            this.sendResponseOnClose = sendResponseOnClose;
-            this.prefix = serverUri;
-            this.bufferPool = new BufferPool(1 * 1024); // Initialize 4k bufferpools. 
+            _readBody = readBody;
+            this.MaxPendingGetContexts = maxPendingContexts;
+            _enqueueOnReceive = enqueueOnReceive;
+            _sendResponseOnClose = sendResponseOnClose;
+            _prefix = serverUri;
+            _bufferPool = new BufferPool(1 * 1024); // Initialize 4k bufferpools. 
             //this.responseData = System.Text.UTF8Encoding.UTF8.GetBytes("<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><EchoResponse xmlns=\"http://tempuri.org/\"><EchoResult>Echo : A</EchoResult></EchoResponse></s:Body></s:Envelope>");
             //this.responseData = System.Text.UTF8Encoding.UTF8.GetBytes("HELLO ASYNC");
-            this.responseData = System.Text.ASCIIEncoding.ASCII.GetBytes(new String('a', 500));
+            _responseData = System.Text.Encoding.ASCII.GetBytes(new String('a', 500));
 
-            this.onGetContext = new AsyncCallback(OnGetContext);
-            this.onReceiveComplete = new AsyncCallback(OnReceiveComplete);
-            this.onWriteComplete = new AsyncCallback(OnWriteComplete);
-            this.onGetContextlater = new WaitCallback(GetContextLater);
+            _onGetContext = new AsyncCallback(OnGetContext);
+            _onReceiveComplete = new AsyncCallback(OnReceiveComplete);
+            _onWriteComplete = new AsyncCallback(OnWriteComplete);
+            _onGetContextlater = new WaitCallback(GetContextLater);
         }
 
         public void StartListening()
         {
             //Setup listener
-            this.listener = new HttpListener();
+            _listener = new HttpListener();
             //this.listener.AuthenticationSchemes =  AuthenticationSchemes.Anonymous;
             //this.listener.UnsafeConnectionNtlmAuthentication = false;
             //this.listener.AuthenticationSchemeSelectorDelegate = new AuthenticationSchemeSelector(SelectAuthenticationScheme);
-            this.listener.Prefixes.Add(this.prefix);
-            this.listener.Start();
-            Console.WriteLine("Server listening on --> " + this.prefix);
+            _listener.Prefixes.Add(_prefix);
+            _listener.Start();
+            Console.WriteLine("Server listening on --> " + _prefix);
 
-            for (int i = 0; i < maxPendingGetContexts; i++)
+            for (int i = 0; i < MaxPendingGetContexts; i++)
             {
                 this.Enqueue();
             }
@@ -73,10 +73,10 @@
 
         void Enqueue()
         {
-            IAsyncResult result = listener.BeginGetContext(onGetContext, null);
+            IAsyncResult result = _listener.BeginGetContext(_onGetContext, null);
             if (result.CompletedSynchronously)
             {
-                Schedule(onGetContextlater, result);
+                Schedule(_onGetContextlater, result);
             }
         }
 
@@ -103,16 +103,16 @@
         void OnGetContextCore(IAsyncResult result)
         {
 
-            if (this.enqueueOnReceive)
+            if (_enqueueOnReceive)
             {
                 this.Enqueue();
             }
 
-            HttpListenerContext context = this.listener.EndGetContext(result);
+            HttpListenerContext context = _listener.EndGetContext(result);
 
-            if (this.readBody)
+            if (_readBody)
             {
-                new ReceiveAsyncResult(context, bufferPool.Take(), this.onReceiveComplete, this);
+                new ReceiveAsyncResult(context, _bufferPool.Take(), _onReceiveComplete, this);
             }
             else
             {
@@ -125,32 +125,32 @@
         {
             context.Response.StatusCode = (int)HttpStatusCode.OK;
             context.Response.ContentType = "text/html";
-            context.Response.ContentLength64 = responseData.Length;
+            context.Response.ContentLength64 = _responseData.Length;
 
-            if (this.sendResponseOnClose)
+            if (_sendResponseOnClose)
             {
                 // We write the content in one shot. 
-                context.Response.Close(responseData, false);
+                context.Response.Close(_responseData, false);
             }
             else
             {
-                new WriteAsyncResult(context, responseData, null, null);
+                new WriteAsyncResult(context, _responseData, null, null);
             }
         }
 
         void OnReceiveComplete(IAsyncResult result)
         {
             HttpListenerContext context = ReceiveAsyncResult.End(result);
-            this.bufferPool.Return(((ReceiveAsyncResult)result).buffer);
+            _bufferPool.Return(((ReceiveAsyncResult)result).buffer);
 
-            if (!this.enqueueOnReceive)
+            if (!_enqueueOnReceive)
             {
                 this.Enqueue();
             }
             SendReply(context);
         }
 
-        void OnWriteComplete(IAsyncResult result)
+        static void OnWriteComplete(IAsyncResult result)
         {
             WriteAsyncResult.End(result);
         }
@@ -332,7 +332,7 @@
                                             );
             server.StartListening();
 
-            Console.WriteLine("MaxPendingGetContexts : {0}" ,server.maxPendingGetContexts);
+            Console.WriteLine("MaxPendingGetContexts : {0}" ,server.MaxPendingGetContexts);
             
             // Make sure we are running with SeverGC since without this the CPU cannot be saturated.
             Trace.Assert(System.Runtime.GCSettings.IsServerGC);

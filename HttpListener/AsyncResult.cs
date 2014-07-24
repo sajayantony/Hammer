@@ -6,31 +6,30 @@ namespace HttpPerf
 {
     public abstract class AsyncResult : IAsyncResult
     {
-        static AsyncCallback asyncCompletionWrapperCallback;
-        AsyncCallback callback;
-        bool completedSynchronously;
-        bool endCalled;
-        Exception exception;
-        bool isCompleted;
-        AsyncCompletion nextAsyncCompletion;
-        object state;
+        static AsyncCallback _asyncCompletionWrapperCallback;
+        readonly AsyncCallback _callback;
+        bool _completedSynchronously;
+        bool _endCalled;
+        Exception _exception;
+        AsyncCompletion _nextAsyncCompletion;
+        readonly object _state;
 
-        ManualResetEvent manualResetEvent;
+        volatile ManualResetEvent _manualResetEvent;
 
-        object thisLock;
+        readonly object _dangerousSelfLock;
 
         protected AsyncResult(AsyncCallback callback, object state)
         {
-            this.callback = callback;
-            this.state = state;
-            this.thisLock = new object();
+            this._callback = callback;
+            this._state = state;
+            this._dangerousSelfLock = this;
         }
 
         public object AsyncState
         {
             get
             {
-                return state;
+                return _state;
             }
         }
 
@@ -38,20 +37,20 @@ namespace HttpPerf
         {
             get
             {
-                if (manualResetEvent != null)
+                if (_manualResetEvent != null)
                 {
-                    return manualResetEvent;
+                    return _manualResetEvent;
                 }
 
                 lock (ThisLock)
                 {
-                    if (manualResetEvent == null)
+                    if (_manualResetEvent == null)
                     {
-                        manualResetEvent = new ManualResetEvent(isCompleted);
+                        _manualResetEvent = new ManualResetEvent(IsCompleted);
                     }
                 }
 
-                return manualResetEvent;
+                return _manualResetEvent;
             }
         }
 
@@ -59,7 +58,7 @@ namespace HttpPerf
         {
             get
             {
-                return completedSynchronously;
+                return _completedSynchronously;
             }
         }
 
@@ -67,17 +66,11 @@ namespace HttpPerf
         {
             get
             {
-                return this.callback != null;
+                return this._callback != null;
             }
         }
 
-        public bool IsCompleted
-        {
-            get
-            {
-                return isCompleted;
-            }
-        }
+        public bool IsCompleted { get; private set; }
 
         protected Action<Exception> OnCompleting { get; set; }
 
@@ -85,7 +78,7 @@ namespace HttpPerf
         {
             get
             {
-                return this.thisLock;
+                return this._dangerousSelfLock;
             }
         }
 
@@ -97,51 +90,51 @@ namespace HttpPerf
 
         protected void Complete(bool completedSynchronously)
         {
-            this.completedSynchronously = completedSynchronously;
+            this._completedSynchronously = completedSynchronously;
             if (OnCompleting != null)
             {
                 try
                 {
-                    OnCompleting(this.exception);
+                    OnCompleting(this._exception);
                 }
                 catch (Exception exception)
                 {
-                    this.exception = exception;
+                    this._exception = exception;
                 }
             }
 
             if (completedSynchronously)
             {
-                this.isCompleted = true;
+                this.IsCompleted = true;
             }
             else
             {
                 lock (ThisLock)
                 {
-                    this.isCompleted = true;
-                    if (this.manualResetEvent != null)
+                    this.IsCompleted = true;
+                    if (this._manualResetEvent != null)
                     {
-                        this.manualResetEvent.Set();
+                        this._manualResetEvent.Set();
                     }
                 }
             }
 
-            if (this.callback != null)
+            if (this._callback != null)
             {
                 if (VirtualCallback != null)
                 {
-                    VirtualCallback(this.callback, this);
+                    VirtualCallback(this._callback, this);
                 }
                 else
                 {
-                    this.callback(this);
+                    this._callback(this);
                 }
             }
         }
 
         protected void Complete(bool completedSynchronously, Exception exception)
         {
-            this.exception = exception;
+            this._exception = exception;
             Complete(completedSynchronously);
         }
 
@@ -175,19 +168,15 @@ namespace HttpPerf
 
         protected AsyncCallback PrepareAsyncCompletion(AsyncCompletion callback)
         {
-            this.nextAsyncCompletion = callback;
-            if (AsyncResult.asyncCompletionWrapperCallback == null)
-            {
-                AsyncResult.asyncCompletionWrapperCallback = new AsyncCallback(AsyncCompletionWrapperCallback);
-            }
-
-            return AsyncResult.asyncCompletionWrapperCallback;
+            this._nextAsyncCompletion = callback;
+            return AsyncResult._asyncCompletionWrapperCallback ??
+                   (AsyncResult._asyncCompletionWrapperCallback = new AsyncCallback(AsyncCompletionWrapperCallback));
         }
 
         AsyncCompletion GetNextCompletion()
         {
-            AsyncCompletion result = this.nextAsyncCompletion;
-            this.nextAsyncCompletion = null;
+            AsyncCompletion result = this._nextAsyncCompletion;
+            this._nextAsyncCompletion = null;
             return result;
         }
 
@@ -203,30 +192,30 @@ namespace HttpPerf
 
             if (asyncResult == null)
             {
-                throw new ArgumentException("result", "Invalid asyncResult");
+                throw new ArgumentException("Invalid result", "result");
             }
 
-            if (asyncResult.endCalled)
+            if (asyncResult._endCalled)
             {
                 throw new InvalidOperationException("AsyncResult has already ended");
             }
 
-            asyncResult.endCalled = true;
+            asyncResult._endCalled = true;
 
-            if (!asyncResult.isCompleted)
+            if (!asyncResult.IsCompleted)
             {
                 asyncResult.AsyncWaitHandle.WaitOne();
             }
 
-            if (asyncResult.manualResetEvent != null)
+            if (asyncResult._manualResetEvent != null)
             {
-                asyncResult.manualResetEvent.Close();
+                asyncResult._manualResetEvent.Close();
             }
 
-            if (asyncResult.exception != null)
+            if (asyncResult._exception != null)
             {
                 // Rethrow the exception
-                throw asyncResult.exception;
+                throw asyncResult._exception;
             }
 
             return asyncResult;
