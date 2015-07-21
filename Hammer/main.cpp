@@ -4,22 +4,6 @@
 #include "stdafx.h"
 #include "HttpListener.h"
 
-// 
-// Test data 
-// 
-void gen_random(char *s, const int len) {
-    static const char alphanum[] =
-        "0123456789"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz";
-
-    for (int i = 0; i < len; ++i) {
-        s[i] = alphanum[rand() % (sizeof(alphanum) - 1)];
-    }
-
-    s[len] = 0;
-}
-
 char* global_responseBuffer;
 
 
@@ -79,9 +63,13 @@ int _tmain(int argc, _TCHAR* argv[])
     }
 
 	// Create the response data
-	const int messageSize = 500;
-	global_responseBuffer = new char[messageSize +1];
-	gen_random(global_responseBuffer, messageSize);
+	global_responseBuffer =
+"HTTP / 1.1 200 OK\n\
+Content - Length: 15\n\
+Content - Type : text / plain; charset = UTF - 8\n\
+Server: Example\n\
+Date : Wed, 17 Apr 2013 12 : 00 : 00 GMT\n\
+Hello, World!";
 	
 	PHTTP_LISTENER listener;
 	DWORD result = CreateHttpListener(&listener);
